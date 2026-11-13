@@ -1,0 +1,210 @@
+{
+  "schema_version": "2024.2",
+  "framework": "Legal Metrology (Packaged Commodities) Rules, 2011 (incl. 2017 & 2022 Amendments) & FSSAI Labelling & Display Regulations 2020",
+  "rule_6_mandatory_declarations": {
+    "Packaged Food": {
+      "citation": "LMPC Rule 6(1) & FSSAI Reg 5",
+      "required_declarations": [
+        "Common/Generic Product Name",
+        "Net Quantity (SI Units)",
+        "MRP with '(INCL. OF ALL TAXES)'",
+        "Unit Sale Price (USP)",
+        "Month & Year of Manufacture/Packing (MFD)",
+        "Use By / Best Before Date",
+        "Manufacturer / Packer Name & Address with 6-digit PIN",
+        "Consumer Care Email & Phone",
+        "Country of Origin",
+        "14-Digit FSSAI License Number",
+        "Ingredients Declaration & Nutritional Info (per 100g/100ml)"
+      ]
+    },
+    "Beverages": {
+      "citation": "LMPC Rule 6(1) & FSSAI Reg 5",
+      "required_declarations": [
+        "Common/Generic Product Name",
+        "Net Volume (ml or L)",
+        "MRP with '(INCL. OF ALL TAXES)'",
+        "Unit Sale Price (USP per ml/L)",
+        "Month & Year of Manufacture/Packing",
+        "Use By / Best Before Date",
+        "Manufacturer / Bottler Address with 6-digit PIN",
+        "Consumer Care Email & Phone",
+        "Country of Origin",
+        "14-Digit FSSAI License Number"
+      ]
+    },
+    "Cosmetics": {
+      "citation": "LMPC Rule 6(1) & Drugs & Cosmetics Rules",
+      "required_declarations": [
+        "Common/Generic Product Name",
+        "Net Quantity (g/ml)",
+        "MRP with '(INCL. OF ALL TAXES)'",
+        "Unit Sale Price (USP)",
+        "Month & Year of Manufacture/Packing",
+        "Use Before / Expiry Date",
+        "Manufacturer / Importer Address with 6-digit PIN",
+        "Consumer Care Email & Phone",
+        "Country of Origin",
+        "Ingredient List (INCI)"
+      ]
+    },
+    "Electronics": {
+      "citation": "LMPC Rule 6(1) & Rule 6(1)(da)",
+      "required_declarations": [
+        "Common/Generic Product Name & Model",
+        "Net Quantity in Units (N / U)",
+        "MRP with '(INCL. OF ALL TAXES)'",
+        "Month & Year of Manufacture / Import",
+        "Manufacturer / Importer Address with 6-digit PIN",
+        "Consumer Care Email & Toll-Free Phone",
+        "Country of Origin"
+      ]
+    },
+    "Household": {
+      "citation": "LMPC Rule 6(1)",
+      "required_declarations": [
+        "Common/Generic Product Name",
+        "Net Quantity (g, kg, ml, L, or U)",
+        "MRP with '(INCL. OF ALL TAXES)'",
+        "Unit Sale Price (USP)",
+        "Month & Year of Manufacture/Packing",
+        "Manufacturer / Packer Address with 6-digit PIN",
+        "Consumer Care Email & Phone",
+        "Country of Origin"
+      ]
+    }
+  },
+  "first_schedule_mpe_table": [
+    {
+      "bracket": "0 to 50 g/ml",
+      "min_qn": 0,
+      "max_qn": 50,
+      "tolerance_type": "percentage",
+      "tolerance_value": 9.0,
+      "unit": "%"
+    },
+    {
+      "bracket": "50 to 100 g/ml",
+      "min_qn": 50,
+      "max_qn": 100,
+      "tolerance_type": "fixed",
+      "tolerance_value": 4.5,
+      "unit": "g/ml"
+    },
+    {
+      "bracket": "100 to 200 g/ml",
+      "min_qn": 100,
+      "max_qn": 200,
+      "tolerance_type": "percentage",
+      "tolerance_value": 4.5,
+      "unit": "%"
+    },
+    {
+      "bracket": "200 to 300 g/ml",
+      "min_qn": 200,
+      "max_qn": 300,
+      "tolerance_type": "fixed",
+      "tolerance_value": 9.0,
+      "unit": "g/ml"
+    },
+    {
+      "bracket": "300 to 500 g/ml",
+      "min_qn": 300,
+      "max_qn": 500,
+      "tolerance_type": "percentage",
+      "tolerance_value": 3.0,
+      "unit": "%"
+    },
+    {
+      "bracket": "500 to 1000 g/ml",
+      "min_qn": 500,
+      "max_qn": 1000,
+      "tolerance_type": "fixed",
+      "tolerance_value": 15.0,
+      "unit": "g/ml"
+    },
+    {
+      "bracket": "> 1000 g/ml",
+      "min_qn": 1000,
+      "max_qn": null,
+      "tolerance_type": "percentage",
+      "tolerance_value": 1.5,
+      "unit": "%"
+    }
+  ],
+  "second_schedule_font_height_matrix": [
+    {
+      "pdp_area_range": "Area <= 50 cm²",
+      "min_area_cm2": 0,
+      "max_area_cm2": 50,
+      "min_font_height_mm": 1.0,
+      "citation": "LMPC Second Schedule (Rule 7)"
+    },
+    {
+      "pdp_area_range": "50 < Area <= 200 cm²",
+      "min_area_cm2": 50,
+      "max_area_cm2": 200,
+      "min_font_height_mm": 2.0,
+      "citation": "LMPC Second Schedule (Rule 7)"
+    },
+    {
+      "pdp_area_range": "200 < Area <= 500 cm²",
+      "min_area_cm2": 200,
+      "max_area_cm2": 500,
+      "min_font_height_mm": 4.0,
+      "citation": "LMPC Second Schedule (Rule 7)"
+    },
+    {
+      "pdp_area_range": "Area > 500 cm²",
+      "min_area_cm2": 500,
+      "max_area_cm2": null,
+      "min_font_height_mm": 6.0,
+      "citation": "LMPC Second Schedule (Rule 7)"
+    }
+  ],
+  "rule_12_si_units": {
+    "citation": "LMPC Rule 12 — Manner of declaration of quantity",
+    "permitted_si_units": ["g", "kg", "ml", "L", "l", "cm", "m", "N", "U"],
+    "forbidden_legacy_abbreviations": [
+      { "legacy": "gm", "replacement": "g", "reason": "Non-SI abbreviation; use 'g' for gram" },
+      { "legacy": "gms", "replacement": "g", "reason": "Non-SI plural abbreviation; use 'g'" },
+      { "legacy": "ltr", "replacement": "L", "reason": "Non-SI abbreviation; use 'L' or 'l' for litre" },
+      { "legacy": "kgms", "replacement": "kg", "reason": "Non-SI abbreviation; use 'kg' for kilogram" },
+      { "legacy": "mltr", "replacement": "ml", "reason": "Non-SI abbreviation; use 'ml' for millilitre" }
+    ]
+  },
+  "fssai_state_prefixes": {
+    "00": "Central Licensing Authority (All India)",
+    "01": "Jammu & Kashmir",
+    "02": "Himachal Pradesh",
+    "03": "Punjab",
+    "04": "Chandigarh",
+    "05": "Uttarakhand",
+    "06": "Haryana",
+    "07": "Delhi",
+    "08": "Rajasthan",
+    "09": "Uttar Pradesh",
+    "10": "Bihar",
+    "11": "Maharashtra",
+    "12": "Arunachal Pradesh",
+    "13": "Madhya Pradesh",
+    "14": "Manipur",
+    "15": "Mizoram",
+    "16": "Tripura",
+    "17": "Meghalaya",
+    "18": "Assam",
+    "19": "West Bengal",
+    "20": "Jharkhand",
+    "21": "Odisha",
+    "22": "Chhattisgarh",
+    "23": "Gujarat",
+    "24": "Gujarat",
+    "27": "Maharashtra",
+    "29": "Karnataka",
+    "30": "Goa",
+    "32": "Kerala",
+    "33": "Tamil Nadu",
+    "36": "Telangana",
+    "37": "Andhra Pradesh"
+  }
+}
