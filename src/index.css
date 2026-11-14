@@ -1,20 +1,36 @@
 @import "tailwindcss";
 
+@theme {
+  --color-alabaster: #F1ECE6;
+  --color-elevated: #FAF7F2;
+  --color-greige: #DDD5CD;
+  --color-rosewood: #7D4047;
+  --color-rosewood-hover: #663238;
+  --color-espresso: #2E2E2E;
+}
+
 @layer base {
   :root {
     --font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-sans: "Public Sans", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    --bg-canvas: #F1ECE6;
+    --bg-surface: #FAF7F2;
+    --bg-muted: #DDD5CD;
+    --accent-brand: #7D4047;
+    --accent-brand-hover: #663238;
+    --text-primary: #2E2E2E;
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: #f8fafc;
-    color: #0f172a;
+    background-color: #F1ECE6;
+    color: #2E2E2E;
   }
 
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
+    color: #2E2E2E;
   }
 
   code, pre, .font-mono {
@@ -32,5 +48,6 @@
   }
   body {
     background: #ffffff !important;
+    color: #2E2E2E !important;
   }
 }

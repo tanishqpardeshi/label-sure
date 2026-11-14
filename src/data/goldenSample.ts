@@ -1,32 +1,45 @@
 import type {
+  AnalysisImage,
+  AuditEvent,
   ComplianceRule,
   ExtractedField,
   HitlReviewItem,
-  NutritionProfile,
   ProductContext,
-  RegionalCityMetric,
+  RuleSetVersion,
 } from '../types/compliance';
+
+export const INITIAL_RULE_SET_VERSION_ID = 'LMPC-2011-v1.0.0';
 
 export const GOLDEN_SAMPLE_CONTEXT: ProductContext = {
   brand: 'ABC Foods Pvt. Ltd.',
   category: 'Packaged Food',
   countryOfOrigin: 'India',
   stateJurisdiction: 'Madhya Pradesh (Central LMPC 2011 + FSSAI 2020)',
-  barcode: '8901491101837',
   pdpAreaCm2: 150,
 };
 
-export const GOLDEN_SAMPLE_NUTRITION: NutritionProfile = {
-  servingBasis: 'per 100g',
-  energyKcal: 536,
-  proteinG: 6.5,
-  totalFatG: 34.0,
-  saturatedFatG: 14.2,
-  transFatG: 0.1,
-  carbohydratesG: 51.8,
-  addedSugarG: 1.2,
-  sodiumMg: 680,
-};
+export const GOLDEN_SAMPLE_IMAGES: AnalysisImage[] = [
+  {
+    imageId: 'img-gs-front',
+    fileName: 'potato_chips_front_pdp.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 342810,
+    sideLabel: 'FRONT_PDP',
+    previewUrl: 'golden://front-pdp',
+    widthPx: 900,
+    heightPx: 1200,
+  },
+  {
+    imageId: 'img-gs-back',
+    fileName: 'potato_chips_back_statutory.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 418920,
+    sideLabel: 'BACK_STATUTORY',
+    previewUrl: 'golden://back-statutory',
+    widthPx: 900,
+    heightPx: 1200,
+  },
+];
 
 export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
   {
@@ -36,9 +49,12 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     rawText: 'POTATO CHIPS — CLASSIC SALTED',
     normalizedText: 'POTATO CHIPS — CLASSIC SALTED',
     region: 'PRODUCT_HEADER',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.98,
     fontHeightMm: 4.8,
     bbox: { x_min: 70, y_min: 55, x_max: 930, y_max: 145 },
+    sourceImageId: 'img-gs-front',
+    sourceSideLabel: 'FRONT_PDP',
   },
   {
     id: 'gs-net-quantity',
@@ -47,9 +63,12 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     rawText: 'NET WEIGHT: 120g',
     normalizedText: 'NET WEIGHT: 120g',
     region: 'STATUTORY_PANEL',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.97,
     fontHeightMm: 2.6,
     bbox: { x_min: 70, y_min: 175, x_max: 455, y_max: 235 },
+    sourceImageId: 'img-gs-front',
+    sourceSideLabel: 'FRONT_PDP',
   },
   {
     id: 'gs-mrp-usp',
@@ -58,9 +77,12 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     rawText: 'MRP ₹ 40.00 (INCL. OF ALL TAXES) | USP ₹ 0.33 per g',
     normalizedText: 'MRP ₹ 40.00 (INCL. OF ALL TAXES) | USP ₹ 0.33 per g',
     region: 'STATUTORY_PANEL',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.96,
     fontHeightMm: 2.2,
     bbox: { x_min: 70, y_min: 268, x_max: 455, y_max: 354 },
+    sourceImageId: 'img-gs-back',
+    sourceSideLabel: 'BACK_STATUTORY',
   },
   {
     id: 'gs-mfd-useby',
@@ -69,9 +91,12 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     rawText: 'MFD: 01/0S/202S | USE BY: 31/10/2025',
     normalizedText: 'MFD: 01/05/2025 | USE BY: 31/10/2025',
     region: 'DATE_BOX',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.89,
     fontHeightMm: 2.0,
     bbox: { x_min: 485, y_min: 175, x_max: 930, y_max: 265 },
+    sourceImageId: 'img-gs-back',
+    sourceSideLabel: 'BACK_STATUTORY',
     glareNormalized: true,
     glareRawSample: '01/0S/202S',
   },
@@ -82,9 +107,12 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     rawText: 'BATCH NO.: A12345',
     normalizedText: 'BATCH NO.: A12345',
     region: 'DATE_BOX',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.96,
     fontHeightMm: 2.0,
     bbox: { x_min: 485, y_min: 275, x_max: 930, y_max: 345 },
+    sourceImageId: 'img-gs-back',
+    sourceSideLabel: 'BACK_STATUTORY',
   },
   {
     id: 'gs-ingredients',
@@ -95,9 +123,12 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     normalizedText:
       'INGREDIENTS: Potato, Edible Vegetable Oil, Iodised Salt, CONTAINS ADDED FLAVOUR (Natural & Nature Identical Flavouring Substances). fssai Lic. No. 1001402202711',
     region: 'INGREDIENTS_BOX',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.94,
     fontHeightMm: 1.5,
     bbox: { x_min: 70, y_min: 380, x_max: 930, y_max: 555 },
+    sourceImageId: 'img-gs-back',
+    sourceSideLabel: 'BACK_STATUTORY',
   },
   {
     id: 'gs-fssai',
@@ -106,9 +137,12 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     rawText: 'FSSAI Lic. No. 1001402202711',
     normalizedText: 'FSSAI Lic. No. 1001402202711',
     region: 'MANUFACTURER_BOX',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.94,
     fontHeightMm: 1.8,
     bbox: { x_min: 70, y_min: 585, x_max: 455, y_max: 685 },
+    sourceImageId: 'img-gs-back',
+    sourceSideLabel: 'BACK_STATUTORY',
   },
   {
     id: 'gs-manufacturer',
@@ -117,10 +151,170 @@ export const GOLDEN_SAMPLE_FIELDS: ExtractedField[] = [
     rawText: 'ABC Foods Pvt. Ltd., 123, Industrial Area, Indore-452001, India',
     normalizedText: 'ABC Foods Pvt. Ltd., 123, Industrial Area, Indore-452001, India',
     region: 'MANUFACTURER_BOX',
+    extractionStatus: 'EXTRACTED',
     confidence: 0.95,
     fontHeightMm: 1.7,
     bbox: { x_min: 70, y_min: 695, x_max: 930, y_max: 810 },
+    sourceImageId: 'img-gs-back',
+    sourceSideLabel: 'BACK_STATUTORY',
   },
+];
+
+export const COMPLIANT_FIXTURE_FIELDS: ExtractedField[] = [
+  {
+    id: 'ok-product-name',
+    key: 'product_name',
+    label: 'Product Name',
+    rawText: 'TURMERIC POWDER (HALDI)',
+    normalizedText: 'TURMERIC POWDER (HALDI)',
+    region: 'PRODUCT_HEADER',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.98,
+    fontHeightMm: 4.5,
+    bbox: { x_min: 70, y_min: 55, x_max: 930, y_max: 145 },
+    sourceImageId: 'img-ok-front',
+    sourceSideLabel: 'FRONT_PDP',
+  },
+  {
+    id: 'ok-net-quantity',
+    key: 'net_quantity',
+    label: 'Net Quantity',
+    rawText: 'NET QUANTITY: 200g',
+    normalizedText: 'NET QUANTITY: 200g',
+    region: 'STATUTORY_PANEL',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.97,
+    fontHeightMm: 2.5,
+    bbox: { x_min: 70, y_min: 175, x_max: 455, y_max: 235 },
+    sourceImageId: 'img-ok-front',
+    sourceSideLabel: 'FRONT_PDP',
+  },
+  {
+    id: 'ok-mrp-usp',
+    key: 'mrp_usp',
+    label: 'MRP & USP',
+    rawText: 'MRP ₹ 65.00 (INCL. OF ALL TAXES) | USP ₹ 0.33 per g',
+    normalizedText: 'MRP ₹ 65.00 (INCL. OF ALL TAXES) | USP ₹ 0.33 per g',
+    region: 'STATUTORY_PANEL',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.96,
+    fontHeightMm: 2.3,
+    bbox: { x_min: 70, y_min: 268, x_max: 455, y_max: 354 },
+    sourceImageId: 'img-ok-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+  },
+  {
+    id: 'ok-mfd-useby',
+    key: 'mfd_use_by',
+    label: 'MFD & Use By Date',
+    rawText: 'MFD: 15/03/2026 | USE BY: 14/03/2027',
+    normalizedText: 'MFD: 15/03/2026 | USE BY: 14/03/2027',
+    region: 'DATE_BOX',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.95,
+    fontHeightMm: 2.1,
+    bbox: { x_min: 485, y_min: 175, x_max: 930, y_max: 265 },
+    sourceImageId: 'img-ok-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+  },
+  {
+    id: 'ok-batch',
+    key: 'batch_number',
+    label: 'Batch Number',
+    rawText: 'BATCH NO.: T2026-88',
+    normalizedText: 'BATCH NO.: T2026-88',
+    region: 'DATE_BOX',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.96,
+    fontHeightMm: 2.0,
+    bbox: { x_min: 485, y_min: 275, x_max: 930, y_max: 345 },
+    sourceImageId: 'img-ok-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+  },
+  {
+    id: 'ok-ingredients',
+    key: 'ingredients_declaration',
+    label: 'Ingredients Declaration',
+    rawText: 'INGREDIENTS: 100% Pure Sun-Dried Turmeric Rhizomes.',
+    normalizedText: 'INGREDIENTS: 100% Pure Sun-Dried Turmeric Rhizomes.',
+    region: 'INGREDIENTS_BOX',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.96,
+    fontHeightMm: 1.8,
+    bbox: { x_min: 70, y_min: 380, x_max: 930, y_max: 555 },
+    sourceImageId: 'img-ok-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+  },
+  {
+    id: 'ok-fssai',
+    key: 'fssai_license',
+    label: 'FSSAI License Number',
+    rawText: 'FSSAI Lic. No. 10018021003456',
+    normalizedText: 'FSSAI Lic. No. 10018021003456',
+    region: 'MANUFACTURER_BOX',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.95,
+    fontHeightMm: 2.0,
+    bbox: { x_min: 70, y_min: 585, x_max: 455, y_max: 685 },
+    sourceImageId: 'img-ok-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+  },
+  {
+    id: 'ok-manufacturer',
+    key: 'manufacturer_details',
+    label: 'Manufacturer Details',
+    rawText: 'Shree Ganesh Foods Pvt. Ltd., Plot 112, GIDC Estate, Ahmedabad-380015, India',
+    normalizedText: 'Shree Ganesh Foods Pvt. Ltd., Plot 112, GIDC Estate, Ahmedabad-380015, India',
+    region: 'MANUFACTURER_BOX',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.96,
+    fontHeightMm: 1.8,
+    bbox: { x_min: 70, y_min: 695, x_max: 930, y_max: 810 },
+    sourceImageId: 'img-ok-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+  },
+];
+
+export const LOW_CONFIDENCE_GLARE_FIELDS: ExtractedField[] = [
+  ...COMPLIANT_FIXTURE_FIELDS.filter(
+    (f) => f.key !== 'mfd_use_by' && f.key !== 'mrp_usp',
+  ).map((f) => ({ ...f, id: `lc-${f.key}` })),
+  {
+    id: 'lc-mrp-usp',
+    key: 'mrp_usp',
+    label: 'MRP & USP',
+    rawText: 'MRP Rs 65 (INCL OF...',
+    normalizedText: 'MRP Rs 65 (INCL OF...',
+    region: 'STATUTORY_PANEL',
+    extractionStatus: 'EXTRACTED',
+    confidence: 0.72,
+    fontHeightMm: 2.1,
+    bbox: { x_min: 70, y_min: 268, x_max: 455, y_max: 354 },
+    sourceImageId: 'img-lc-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+  },
+  {
+    id: 'lc-mfd-useby',
+    key: 'mfd_use_by',
+    label: 'MFD & Use By Date',
+    rawText: 'MFD: 03/04/2026 | USE BY: 09/10/2026',
+    normalizedText: 'MFD: 03/04/2026 | USE BY: 09/10/2026',
+    region: 'DATE_BOX',
+    extractionStatus: 'AMBIGUOUS',
+    confidence: 0.79,
+    fontHeightMm: 2.0,
+    bbox: { x_min: 485, y_min: 175, x_max: 930, y_max: 265 },
+    sourceImageId: 'img-lc-back',
+    sourceSideLabel: 'BACK_STATUTORY',
+    ambiguityReason:
+      'Both 03/04/2026 and 09/10/2026 contain day/month components <= 12 under metallic crease glare; day/month order is ambiguous (VAL-07).',
+  },
+];
+
+export const MISSING_DECLARATION_FIELDS: ExtractedField[] = [
+  ...COMPLIANT_FIXTURE_FIELDS.filter(
+    (f) => f.key !== 'mrp_usp' && f.key !== 'net_quantity',
+  ).map((f) => ({ ...f, id: `miss-${f.key}` })),
 ];
 
 export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
@@ -134,6 +328,7 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
     category: 'All Packaged Commodities',
     priority: 'CRITICAL',
     enabled: true,
+    status: 'PUBLISHED',
     description:
       'Maximum Retail Price must feature the ₹ symbol and the mandatory "(INCL. OF ALL TAXES)" declaration.',
     parameters: {
@@ -152,6 +347,7 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
     category: 'All Packaged Commodities',
     priority: 'CRITICAL',
     enabled: true,
+    status: 'PUBLISHED',
     description:
       'Net quantity must be expressed strictly in SI metric units (g, kg, ml, L) with compliant numeral height.',
     parameters: {
@@ -169,6 +365,7 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
     category: 'All Packaged Commodities',
     priority: 'HIGH',
     enabled: true,
+    status: 'PUBLISHED',
     description:
       'Verifies declared Unit Sale Price (e.g. ₹ 0.33 per g) matches MRP divided by declared Net Weight within ±₹0.03 tolerance.',
     parameters: {
@@ -186,11 +383,12 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
     category: 'Packaged Food',
     priority: 'CRITICAL',
     enabled: true,
+    status: 'PUBLISHED',
     description:
-      'Validates manufacture date and use-by date order (Use By > MFD) after metallic foil-glare OCR normalization.',
+      'Validates manufacture date and use-by date order (Use By > MFD) after metallic foil-glare OCR normalization without guessing ambiguous dates.',
     parameters: {
       enableGlareNormalization: true,
-      requireStrictFutureExpiry: true,
+      requireUnambiguousDateOrder: true,
     },
   },
   {
@@ -203,6 +401,7 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
     category: 'All Packaged Commodities',
     priority: 'HIGH',
     enabled: true,
+    status: 'PUBLISHED',
     description:
       'Manufacturer or packer name and complete postal address must include city, state/country, and a valid 6-digit Indian PIN code.',
     parameters: {
@@ -220,6 +419,7 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
     category: 'Packaged Food',
     priority: 'CRITICAL',
     enabled: true,
+    status: 'PUBLISHED',
     description:
       'Packaged foods must display a valid 14-digit FSSAI License number inside the statutory manufacturer or principal panel.',
     parameters: {
@@ -237,6 +437,7 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
     category: 'Packaged Food',
     priority: 'CRITICAL',
     enabled: true,
+    status: 'PUBLISHED',
     description:
       'Detects statutory entities (e.g., FSSAI Lic. No.) printed inside INGREDIENTS_BOX instead of exclusively in the statutory license zone.',
     parameters: {
@@ -246,14 +447,24 @@ export const DEFAULT_COMPLIANCE_RULES: ComplianceRule[] = [
   },
 ];
 
+export const INITIAL_PUBLISHED_RULE_SET: RuleSetVersion = {
+  versionId: INITIAL_RULE_SET_VERSION_ID,
+  publishedAt: '2026-11-01T00:00:00Z',
+  publishedBy: 'admin-rule-maint',
+  releaseNotes: 'Baseline approved LMPC Rules 2011 (2017/2022 Amendments) & FSSAI 2020 screening rule-set.',
+  rules: DEFAULT_COMPLIANCE_RULES,
+};
+
 export const INITIAL_HITL_QUEUE: HitlReviewItem[] = [
   {
-    id: 'HITL-2025-8841',
-    inspectionId: 'INSP-MP-4092',
+    id: 'HITL-2026-8841',
+    analysisId: 'ANL-MP-4092',
+    ownerId: 'msme-abc-foods',
     productName: 'Masala Roasted Peanuts 150g',
     fieldKey: 'mfd_use_by',
     fieldLabel: 'MFD & Use By Date',
     region: 'DATE_BOX',
+    sourceSideLabel: 'BACK_STATUTORY',
     rawOcrText: 'MFD: 08/0S/202S | USE BY: 07/11/202S',
     suggestedText: 'MFD: 08/05/2025 | USE BY: 07/11/2025',
     confidence: 0.78,
@@ -263,12 +474,14 @@ export const INITIAL_HITL_QUEUE: HitlReviewItem[] = [
     bbox: { x_min: 510, y_min: 190, x_max: 910, y_max: 270 },
   },
   {
-    id: 'HITL-2025-8842',
-    inspectionId: 'INSP-MH-3118',
+    id: 'HITL-2026-8842',
+    analysisId: 'ANL-MH-3118',
+    ownerId: 'msme-other-packer',
     productName: 'Mango Fruit Drink Tetra 250ml',
     fieldKey: 'mrp_usp',
     fieldLabel: 'MRP & USP',
     region: 'STATUTORY_PANEL',
+    sourceSideLabel: 'SIDE_PANEL',
     rawOcrText: 'MRP Rs. 20.OO (INCL OF ALL TAXES)',
     suggestedText: 'MRP ₹ 20.00 (INCL. OF ALL TAXES)',
     confidence: 0.81,
@@ -278,12 +491,14 @@ export const INITIAL_HITL_QUEUE: HitlReviewItem[] = [
     bbox: { x_min: 90, y_min: 260, x_max: 440, y_max: 340 },
   },
   {
-    id: 'HITL-2025-8843',
-    inspectionId: 'INSP-DL-1904',
+    id: 'HITL-2026-8843',
+    analysisId: 'ANL-DL-1904',
+    ownerId: 'msme-other-packer',
     productName: 'Herbal Hair Oil 100ml',
     fieldKey: 'manufacturer_details',
     fieldLabel: 'Manufacturer Details',
     region: 'MANUFACTURER_BOX',
+    sourceSideLabel: 'BACK_STATUTORY',
     rawOcrText: 'Nirmal Botanics, Plot 42, Okhla Ph-II, New Delhi-11002O',
     suggestedText: 'Nirmal Botanics, Plot 42, Okhla Ph-II, New Delhi-110020',
     confidence: 0.74,
@@ -294,61 +509,26 @@ export const INITIAL_HITL_QUEUE: HitlReviewItem[] = [
   },
 ];
 
-export const REGIONAL_CITY_METRICS: RegionalCityMetric[] = [
+export const INITIAL_AUDIT_EVENTS: AuditEvent[] = [
   {
-    city: 'Indore',
-    state: 'Madhya Pradesh',
-    lat: 22.7196,
-    lng: 75.8577,
-    inspectionsCount: 1420,
-    violationRatePct: 18.4,
-    criticalFails: 112,
-    topViolationRule: 'CROSS_FIELD_MISPLACED_ENTITY',
-    recentBatchStatus: 'Elevated Risk',
+    eventId: 'AUD-2026-0001',
+    actorId: 'admin-rule-maint',
+    actorRole: 'MAINTAINER',
+    action: 'RULE_SET_PUBLISHED',
+    target: INITIAL_RULE_SET_VERSION_ID,
+    timestamp: '2026-11-01T00:00:00Z',
+    outcome: 'SUCCESS',
+    details: 'Published baseline approved rule-set LMPC-2011-v1.0.0 (7 active statutory rules).',
   },
   {
-    city: 'Bhopal',
-    state: 'Madhya Pradesh',
-    lat: 23.2599,
-    lng: 77.4126,
-    inspectionsCount: 980,
-    violationRatePct: 14.1,
-    criticalFails: 64,
-    topViolationRule: 'LMPC_R6_MRP_INCL_TAX',
-    recentBatchStatus: 'Moderate',
-  },
-  {
-    city: 'Mumbai',
-    state: 'Maharashtra',
-    lat: 19.076,
-    lng: 72.8777,
-    inspectionsCount: 3250,
-    violationRatePct: 9.2,
-    criticalFails: 128,
-    topViolationRule: 'LMPC_USP_ARITHMETIC_CHECK',
-    recentBatchStatus: 'Compliant',
-  },
-  {
-    city: 'Delhi',
-    state: 'Delhi NCR',
-    lat: 28.6139,
-    lng: 77.209,
-    inspectionsCount: 2890,
-    violationRatePct: 16.8,
-    criticalFails: 204,
-    topViolationRule: 'FSSAI_LIC_14_DIGIT',
-    recentBatchStatus: 'Elevated Risk',
-  },
-  {
-    city: 'Bengaluru',
-    state: 'Karnataka',
-    lat: 12.9716,
-    lng: 77.5946,
-    inspectionsCount: 2410,
-    violationRatePct: 8.6,
-    criticalFails: 81,
-    topViolationRule: 'LMPC_R6_NET_QUANTITY_SI_UNITS',
-    recentBatchStatus: 'Compliant',
+    eventId: 'AUD-2026-0002',
+    actorId: 'msme-abc-foods',
+    actorRole: 'MANUFACTURER',
+    action: 'ANALYSIS_CREATED',
+    target: 'ANL-GS-2026-001',
+    timestamp: '2026-11-13T08:30:00Z',
+    outcome: 'SUCCESS',
+    details: 'Evaluated multi-side Golden Sample under LMPC-2011-v1.0.0 (FAIL: CROSS_FIELD_MISPLACED_ENTITY).',
   },
 ];
 
@@ -358,70 +538,101 @@ export const SAMPLE_PRESET_IMAGES = [
     title: 'Turmeric Powder Pouch (200g)',
     subtitle: 'Bilingual EN + HI · Spice Pouch',
     imageUrl: '/src/assets/images/sample_masala_pouch_1794590256609.jpg',
+    sideLabel: 'BACK_STATUTORY' as const,
     context: {
       brand: 'Shree Ganesh Foods Pvt. Ltd.',
       category: 'Packaged Food' as const,
       countryOfOrigin: 'India',
       stateJurisdiction: 'Gujarat (Central LMPC 2011 + FSSAI 2020)',
-      barcode: '8901122334455',
+      pdpAreaCm2: 150,
     },
-    declaredWeightGrams: 200,
   },
   {
     id: 'preset-biscuit',
     title: 'Indian Butter Cookies Box (150g)',
-    subtitle: 'Full Nutrition Table · Carton Label',
+    subtitle: 'Carton Statutory Panel Sample',
     imageUrl: '/src/assets/images/sample_biscuit_pack_1794590257453.jpg',
+    sideLabel: 'BACK_STATUTORY' as const,
     context: {
-      brand: 'Sugar & Spice / Britannia Industries Ltd.',
+      brand: 'Britannia Industries Ltd.',
       category: 'Packaged Food' as const,
       countryOfOrigin: 'India',
       stateJurisdiction: 'Maharashtra (Central LMPC 2011 + FSSAI 2020)',
-      barcode: '8901063012345',
+      pdpAreaCm2: 150,
     },
-    declaredWeightGrams: 150,
   },
 ];
 
-export const DEFAULT_ECOMMERCE_BULK_PAYLOAD = {
-  marketplace: 'BharatRetail Seller Hub',
-  batchId: 'PRE-LISTING-2026-11-13',
-  items: [
-    {
-      sku: 'SKU-CHIPS-120G',
-      productName: 'Potato Chips — Classic Salted',
-      declaredNetQuantity: '120g',
-      mrpDeclaration: 'MRP ₹ 40.00 (INCL. OF ALL TAXES) | USP ₹ 0.33 per g',
-      mfdDate: '01/05/2025',
-      useByDate: '31/10/2025',
-      fssaiLicense: '10014022027110',
-      manufacturerAddress: 'ABC Foods Pvt. Ltd., 123, Industrial Area, Indore-452001, India',
-      ingredientsText: 'INGREDIENTS: Potato, Edible Vegetable Oil, Iodised Salt, fssai Lic. No. 1001402202711',
-      measuredScaleWeightGrams: 119.2,
-    },
-    {
-      sku: 'SKU-TURMERIC-200G',
-      productName: 'Turmeric Powder / Haldi Powder',
-      declaredNetQuantity: '200g',
-      mrpDeclaration: 'MRP ₹ 65.00 (INCL. OF ALL TAXES) | USP ₹ 0.33 per g',
-      mfdDate: '12/04/2025',
-      useByDate: '11/04/2026',
-      fssaiLicense: '10018021003456',
-      manufacturerAddress: 'Shree Ganesh Foods Pvt. Ltd., Plot 112, GIDC Estate, Ahmedabad-380015, India',
-      ingredientsText: 'INGREDIENTS: 100% Pure Turmeric Rhizomes.',
-      measuredScaleWeightGrams: 201.4,
-    },
-    {
-      sku: 'SKU-IMPORTED-BAR',
-      productName: 'Dark Almond Cocoa Bar',
-      declaredNetQuantity: '3.5 oz',
-      mrpDeclaration: 'MRP ₹ 180.00',
-      mfdDate: '15/06/2025',
-      useByDate: '15/03/2025',
-      fssaiLicense: '1001902200',
-      manufacturerAddress: 'Global Confectionery Imports, Mumbai',
-      ingredientsText: 'INGREDIENTS: Cocoa Solids, Almonds, Sugar.',
-      measuredScaleWeightGrams: 91.0,
-    },
-  ],
-};
+export interface AcceptanceTestSpec {
+  id: 'AT-01' | 'AT-02' | 'AT-04' | 'AT-05' | 'AT-07' | 'AT-10';
+  title: string;
+  srsRef: string;
+  description: string;
+  expectedOutcome: string;
+}
+
+export const SRS_ACCEPTANCE_FIXTURES: AcceptanceTestSpec[] = [
+  {
+    id: 'AT-01',
+    title: 'AT-01 / AT-06: Multi-Side Non-Compliant Package',
+    srsRef: 'SRS Sec 12 · AT-01, AT-06',
+    description:
+      'Golden sample with Front PDP + Back Statutory Panel containing misplaced FSSAI Lic. No. inside INGREDIENTS_BOX.',
+    expectedOutcome: 'Status FAIL · CROSS_FIELD_MISPLACED_ENTITY flagged with evidence bbox.',
+  },
+  {
+    id: 'AT-02',
+    title: 'AT-02: Corrupt / Unsupported File Rejection',
+    srsRef: 'SRS Sec 12 · AT-02, VAL-01..03, ERR-01',
+    description:
+      'Simulates uploading a corrupt binary payload with spoofed .jpg extension.',
+    expectedOutcome: 'Processing state FAILED (ERR-01) · No false compliance report generated.',
+  },
+  {
+    id: 'AT-04',
+    title: 'AT-04: Missing Mandatory Declarations',
+    srsRef: 'SRS Sec 12 · AT-04, FR-007, BR-03',
+    description:
+      'Package side images missing MRP & Net Quantity declarations.',
+    expectedOutcome: 'extraction_status=MISSING · Evaluated UNVERIFIED (never PASS).',
+  },
+  {
+    id: 'AT-05',
+    title: 'AT-05: Fully Compliant Packaged Commodity',
+    srsRef: 'SRS Sec 12 · AT-05',
+    description:
+      'All 8 statutory declarations cleanly extracted in permitted SI units & statutory zones.',
+    expectedOutcome: 'Overall status PASS · Zero violations.',
+  },
+  {
+    id: 'AT-07',
+    title: 'AT-07: Low-Confidence & Ambiguous Date Gatekeeper',
+    srsRef: 'SRS Sec 12 · AT-07, VAL-07',
+    description:
+      'OCR confidence < 85% on MRP and ambiguous day/month date pair (03/04/2026).',
+    expectedOutcome: 'Status UNVERIFIED (REVIEW_REQUIRED) · Routed to HITL Review Queue.',
+  },
+  {
+    id: 'AT-10',
+    title: 'AT-10: Rule Version Immutability Verification',
+    srsRef: 'SRS Sec 12 · AT-10, BR-02, BR-08',
+    description:
+      'Verifies historical persisted reports retain their original rule_set_version_id after publishing a newer rule-set version.',
+    expectedOutcome: 'Historical report preserves LMPC-2011-v1.0.0 even after v1.1.0 is published.',
+  },
+];
+
+export const FULL_SRS_ACCEPTANCE_MATRIX = [
+  { id: 'AT-01', name: 'Multi-Side Package Intake & Analysis', srsRef: 'FR-001, FR-002', mode: 'Interactive Fixture + Upload' },
+  { id: 'AT-02', name: 'Corrupt / Unsupported File Rejection (ERR-01)', srsRef: 'VAL-01..04, ERR-01', mode: 'Interactive Fixture + Unit Test' },
+  { id: 'AT-03', name: '6-Stage Processing State Machine (FAILED halt)', srsRef: 'FR-004, FR-022', mode: 'Live Stepper + Unit Test' },
+  { id: 'AT-04', name: 'Missing Mandatory Declaration -> UNVERIFIED', srsRef: 'FR-007, BR-03, VAL-06', mode: 'Interactive Fixture + Unit Test' },
+  { id: 'AT-05', name: 'Fully Compliant Package -> PASS', srsRef: 'FR-010, FR-012', mode: 'Interactive Fixture + Unit Test' },
+  { id: 'AT-06', name: 'Non-Compliant Cross-Field Placement -> FAIL', srsRef: 'FR-011, FR-013', mode: 'Golden Sample + Unit Test' },
+  { id: 'AT-07', name: 'Low-Confidence / Ambiguous Date -> HITL Queue', srsRef: 'VAL-07, FR-014', mode: 'Interactive Fixture + HITL Tab' },
+  { id: 'AT-08', name: 'Mandatory BR-06 Screening Disclaimer Display', srsRef: 'BR-06, Sec 11.1', mode: 'Workbench + Printable PDF' },
+  { id: 'AT-09', name: 'Printable / JSON Report Traceability Export', srsRef: 'FR-016, FR-017, BR-09', mode: 'JSON + Print View' },
+  { id: 'AT-10', name: 'Immutable Rule-Set Versioning & History Lock', srsRef: 'FR-019..021, BR-02, BR-08', mode: 'Maintainer Publish + Fixture' },
+  { id: 'AT-11', name: 'RBAC Ownership & Visitor Default Deny (ERR-08)', srsRef: 'AUTH-01..06, SEC-01, SEC-06', mode: 'Role Switcher + Unit Test' },
+  { id: 'AT-12', name: 'Persisted Records Retrievable After Reload', srsRef: 'FR-018', mode: 'localStorage + Backend API' },
+];

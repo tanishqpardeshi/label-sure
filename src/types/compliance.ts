@@ -9,6 +9,32 @@ export type ComplianceStatus = 'PASS' | 'FAIL' | 'WARNING' | 'UNVERIFIED';
 
 export type OverallReportStatus = 'PASS' | 'FAIL' | 'REVIEW_REQUIRED';
 
+export type ExtractionStatus = 'EXTRACTED' | 'MISSING' | 'AMBIGUOUS';
+
+export type ProcessingState = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+
+export type PipelineStageId =
+  | 'INTAKE'
+  | 'OCR'
+  | 'EXTRACTION'
+  | 'RULE_SELECTION'
+  | 'EVALUATION'
+  | 'REPORTING';
+
+export type PipelineStageStatus = 'PENDING' | 'ACTIVE' | 'COMPLETED' | 'FAILED';
+
+export type PackageSideLabel =
+  | 'FRONT_PDP'
+  | 'BACK_STATUTORY'
+  | 'SIDE_PANEL'
+  | 'TOP_LID';
+
+export type UserRole =
+  | 'MANUFACTURER'
+  | 'INSPECTOR'
+  | 'MAINTAINER'
+  | 'VISITOR';
+
 export type FieldKey =
   | 'product_name'
   | 'net_quantity'
@@ -27,6 +53,17 @@ export interface BoundingBox {
   y_max: number;
 }
 
+export interface AnalysisImage {
+  imageId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sideLabel: PackageSideLabel;
+  previewUrl: string;
+  widthPx?: number;
+  heightPx?: number;
+}
+
 export interface ExtractedField {
   id: string;
   key: FieldKey;
@@ -34,11 +71,15 @@ export interface ExtractedField {
   rawText: string;
   normalizedText: string;
   region: SpatialRegion;
+  extractionStatus: ExtractionStatus;
   confidence: number; // 0.0 to 1.0
   fontHeightMm: number;
   bbox: BoundingBox;
+  sourceImageId?: string;
+  sourceSideLabel?: PackageSideLabel;
   glareNormalized?: boolean;
   glareRawSample?: string;
+  ambiguityReason?: string;
 }
 
 export interface ComplianceCheckpoint {
@@ -46,62 +87,69 @@ export interface ComplianceCheckpoint {
   key: FieldKey;
   label: string;
   ruleId: string;
+  ruleVersion: string;
   regulationCitation: string;
   region: SpatialRegion;
+  extractionStatus: ExtractionStatus;
   rawText: string;
   normalizedText: string;
   confidence: number;
   fontHeightMm: number;
   bbox: BoundingBox;
+  sourceImageId?: string;
+  sourceSideLabel?: PackageSideLabel;
   status: ComplianceStatus;
   rationale: string;
+  evaluationTrace: string;
   correctiveAction?: string;
   glareNormalized?: boolean;
   glareRawSample?: string;
-}
-
-export interface NutritionProfile {
-  servingBasis: 'per 100g' | 'per 100ml';
-  energyKcal: number;
-  proteinG: number;
-  totalFatG: number;
-  saturatedFatG: number;
-  transFatG: number;
-  carbohydratesG: number;
-  addedSugarG: number;
-  sodiumMg: number;
-}
-
-export interface NutritionAssessment {
-  score: number; // 0 to 100
-  grade: 'Balanced' | 'Moderate' | 'High Risk';
-  insights: string[];
-  profile: NutritionProfile;
-}
-
-export interface MpeEvaluation {
-  declaredGrams: number;
-  measuredGrams: number;
-  mpeToleranceGrams: number;
-  mpePercentage: number;
-  minAllowedGrams: number;
-  deviationGrams: number;
-  status: 'PASS' | 'FAIL';
-  scheduleCitation: string;
 }
 
 export interface ComplianceRule {
   ruleId: string;
   version: string;
   name: string;
-  regulation: 'LMPC Rules 2011' | 'LMPC Amendment 2017' | 'LMPC Amendment 2022' | 'FSSAI Labelling & Display 2020';
+  regulation:
+    | 'LMPC Rules 2011'
+    | 'LMPC Amendment 2017'
+    | 'LMPC Amendment 2022'
+    | 'FSSAI Labelling & Display 2020';
   citation: string;
   targetField: FieldKey | 'CROSS_FIELD';
   category: 'All Packaged Commodities' | 'Packaged Food' | 'Cosmetics' | 'Electronics';
   priority: 'CRITICAL' | 'HIGH' | 'MEDIUM';
   enabled: boolean;
+  status: 'PUBLISHED' | 'DRAFT';
   description: string;
   parameters: Record<string, string | number | boolean | string[]>;
+}
+
+export interface RuleSetVersion {
+  versionId: string;
+  publishedAt: string;
+  publishedBy: string;
+  releaseNotes: string;
+  rules: ComplianceRule[];
+}
+
+export interface AuditEvent {
+  eventId: string;
+  actorId: string;
+  actorRole: UserRole;
+  action:
+    | 'ANALYSIS_CREATED'
+    | 'ANALYSIS_FAILED'
+    | 'RULE_DRAFT_UPDATED'
+    | 'RULE_SET_PUBLISHED'
+    | 'HITL_ITEM_APPROVED'
+    | 'HITL_ITEM_REJECTED'
+    | 'ACCESS_DENIED'
+    | 'ROLE_SESSION_SWITCHED';
+  target: string;
+  timestamp: string;
+  outcome: 'SUCCESS' | 'DENIED' | 'FAILED';
+  details: string;
 }
 
 export interface ProductContext {
@@ -109,29 +157,7 @@ export interface ProductContext {
   category: 'Packaged Food' | 'Cosmetics' | 'Electronics' | 'Beverages' | 'Household';
   countryOfOrigin: string;
   stateJurisdiction: string;
-  barcode?: string;
   pdpAreaCm2?: number;
-}
-
-export interface BarcodeVerificationResult {
-  found: boolean;
-  source: 'openfoodfacts_live' | 'offline_catalog_fallback';
-  barcode: string;
-  productName: string;
-  brand: string;
-  netQuantity: string;
-  ingredientsText: string;
-  nutritionProfile?: NutritionProfile;
-}
-
-export interface PinCodeVerificationResult {
-  valid: boolean;
-  source: 'indiapost_live' | 'offline_directory_fallback';
-  pincode: string;
-  postOffice: string;
-  district: string;
-  state: string;
-  message: string;
 }
 
 export interface FssaiDecodeResult {
@@ -146,34 +172,74 @@ export interface FssaiDecodeResult {
 
 export interface HitlReviewItem {
   id: string;
-  inspectionId: string;
+  analysisId: string;
+  ownerId: string;
   productName: string;
   fieldKey: FieldKey;
   fieldLabel: string;
   region: SpatialRegion;
+  sourceSideLabel?: PackageSideLabel;
   rawOcrText: string;
   suggestedText: string;
   confidence: number;
-  issueType: 'Foil Glare Distortion' | 'Low Print Contrast' | 'Creased Surface' | 'Indic-English Script Mix';
+  issueType:
+    | 'Foil Glare Distortion'
+    | 'Low Print Contrast'
+    | 'Creased Surface'
+    | 'Ambiguous Date Order'
+    | 'Missing Mandatory Field'
+    | 'Indic-English Script Mix';
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   capturedAt: string;
   inspectorNote?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
   bbox: BoundingBox;
 }
 
+export interface PipelineStageRecord {
+  id: PipelineStageId;
+  stepNumber: 1 | 2 | 3 | 4 | 5 | 6;
+  label: string;
+  status: PipelineStageStatus;
+  detail: string;
+  metadata?: string;
+}
+
+export interface OcrMetadata {
+  engine: string;
+  engineVersion: string;
+  languages: string[];
+  detectedRegionsCount: number;
+  averageConfidence: number;
+}
+
+export interface PipelineErrorDetail {
+  code: 'ERR-01' | 'ERR-02' | 'ERR-03' | 'ERR-04' | 'ERR-08';
+  stage: PipelineStageId;
+  message: string;
+  guidance: string;
+}
+
 export interface InspectionReport {
-  inspectionId: string;
+  analysisId: string;
+  ownerId: string;
+  ownerRole: UserRole;
   timestamp: string;
-  sourceMode: 'golden_sample' | 'upload' | 'camera' | 'sample_preset';
-  imageUrl?: string;
+  sourceMode: 'golden_sample' | 'upload' | 'sample_preset' | 'acceptance_fixture';
+  fixtureId?: string;
+  processingState: ProcessingState;
+  ruleSetVersionId: string;
+  images: AnalysisImage[];
   productContext: ProductContext;
   pdpAreaCm2: number;
   requiredFontHeightMm: number;
+  ocrMetadata: OcrMetadata;
+  selectedRuleIds: string[];
+  pipelineStages: PipelineStageRecord[];
   overallStatus: OverallReportStatus;
   overallConfidence: number;
   checkpoints: ComplianceCheckpoint[];
-  nutrition?: NutritionAssessment;
-  mpeEvaluation?: MpeEvaluation;
   hitlPendingCount: number;
   summaryCounts: {
     pass: number;
@@ -181,16 +247,12 @@ export interface InspectionReport {
     warning: number;
     unverified: number;
   };
+  errorDetail?: PipelineErrorDetail;
 }
 
-export interface RegionalCityMetric {
-  city: string;
-  state: string;
-  lat: number;
-  lng: number;
-  inspectionsCount: number;
-  violationRatePct: number;
-  criticalFails: number;
-  topViolationRule: string;
-  recentBatchStatus: 'Elevated Risk' | 'Moderate' | 'Compliant';
+export interface DemoSession {
+  role: UserRole;
+  actorId: string;
+  displayName: string;
+  organization: string;
 }

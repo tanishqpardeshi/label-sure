@@ -1,6 +1,6 @@
 {
   "name": "LabelSure — From Package Label to Proof",
   "description": "AI-powered multilingual compliance verification platform converting packaged commodity images into explainable LMPC Rules 2011 and FSSAI compliance reports.",
-  "requestFramePermissions": ["camera"],
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -4,26 +4,40 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { GoogleGenAI, Type } from '@google/genai';
 import {
-  decodeFssaiLicense,
+  buildFailedAnalysisReport,
   evaluatePackageCompliance,
+  extractDatesFromText,
   normalizeGlareDateText,
 } from './src/lib/complianceEngine';
-import { DEFAULT_COMPLIANCE_RULES } from './src/data/goldenSample';
+import {
+  decodeBase64ToBytes,
+  validateImageBuffer,
+} from './src/lib/inputValidation';
+import { canAccessRecord, DEMO_SESSIONS, getRolePermissions } from './src/lib/rbac';
+import {
+  DEFAULT_COMPLIANCE_RULES,
+  INITIAL_AUDIT_EVENTS,
+  INITIAL_PUBLISHED_RULE_SET,
+} from './src/data/goldenSample';
 import type {
-  BarcodeVerificationResult,
+  AnalysisImage,
+  AuditEvent,
   ComplianceRule,
+  ExtractionStatus,
   ExtractedField,
   FieldKey,
-  NutritionProfile,
-  PinCodeVerificationResult,
+  InspectionReport,
+  PackageSideLabel,
   ProductContext,
+  RuleSetVersion,
   SpatialRegion,
+  UserRole,
 } from './src/types/compliance';
 
 const PORT = 3000;
 const app = express();
 
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '35mb' }));
 
 function getGeminiClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -39,6 +53,11 @@ function getGeminiClient(): GoogleGenAI {
     },
   });
 }
+
+// In-memory MVP persistence store (synced alongside browser localStorage per FR-018)
+const persistedAnalyses = new Map<string, InspectionReport>();
+const publishedRuleSets: RuleSetVersion[] = [INITIAL_PUBLISHED_RULE_SET];
+const auditLogStore: AuditEvent[] = [...INITIAL_AUDIT_EVENTS];
 
 const VALID_REGIONS: SpatialRegion[] = [
   'PRODUCT_HEADER',
@@ -70,342 +89,313 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   ingredients_declaration: 'Ingredients Declaration',
 };
 
+function resolveRequestRole(req: express.Request): { role: UserRole; actorId: string } {
+  const rawRole = String(req.header('x-demo-role') || 'MANUFACTURER').toUpperCase();
+  const validRole: UserRole =
+    rawRole === 'INSPECTOR' || rawRole === 'MAINTAINER' || rawRole === 'VISITOR'
+      ? rawRole
+      : 'MANUFACTURER';
+  const session = DEMO_SESSIONS[validRole];
+  return { role: session.role, actorId: session.actorId };
+}
+
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'LabelSure Compliance API' });
-});
-
-const OFFLINE_BARCODE_FALLBACK: Record<string, BarcodeVerificationResult> = {
-  '8901063092686': {
-    found: true,
-    source: 'offline_catalog_fallback',
-    barcode: '8901063092686',
-    productName: 'Good Day Butter Cookies',
-    brand: 'Britannia Industries Ltd.',
-    netQuantity: 'NET WEIGHT: 100g',
-    ingredientsText:
-      'INGREDIENTS: Refined Wheat Flour (Maida), Sugar, Refined Palm Oil, Butter (3.5%), Invert Syrup, Milk Solids, Salt, Raising Agents, Emulsifiers.',
-    nutritionProfile: {
-      servingBasis: 'per 100g',
-      energyKcal: 498,
-      proteinG: 6.8,
-      totalFatG: 21.5,
-      saturatedFatG: 10.6,
-      transFatG: 0.1,
-      carbohydratesG: 69.2,
-      addedSugarG: 23.0,
-      sodiumMg: 295,
-    },
-  },
-  '8901491101837': {
-    found: true,
-    source: 'offline_catalog_fallback',
-    barcode: '8901491101837',
-    productName: 'Classic Salted Potato Chips',
-    brand: 'ABC Foods Pvt. Ltd.',
-    netQuantity: 'NET WEIGHT: 120g',
-    ingredientsText:
-      'INGREDIENTS: Potato, Edible Vegetable Oil, Iodised Salt, CONTAINS ADDED FLAVOUR (Natural & Nature Identical Flavouring Substances). fssai Lic. No. 1001402202711',
-    nutritionProfile: {
-      servingBasis: 'per 100g',
-      energyKcal: 536,
-      proteinG: 6.5,
-      totalFatG: 34.0,
-      saturatedFatG: 14.2,
-      transFatG: 0.1,
-      carbohydratesG: 51.8,
-      addedSugarG: 1.2,
-      sodiumMg: 680,
-    },
-  },
-  '8901058851298': {
-    found: true,
-    source: 'offline_catalog_fallback',
-    barcode: '8901058851298',
-    productName: '2-Minute Masala Instant Noodles',
-    brand: 'Nestle India Ltd.',
-    netQuantity: 'NET WEIGHT: 70g',
-    ingredientsText:
-      'INGREDIENTS: Wheat Flour, Palm Oil, Salt, Wheat Gluten, Thickeners, Acidity Regulators, Mixed Spices (Onion Powder, Coriander, Turmeric, Red Chilli, Cumin, Garlic).',
-    nutritionProfile: {
-      servingBasis: 'per 100g',
-      energyKcal: 427,
-      proteinG: 8.0,
-      totalFatG: 15.7,
-      saturatedFatG: 7.4,
-      transFatG: 0.1,
-      carbohydratesG: 63.5,
-      addedSugarG: 1.8,
-      sodiumMg: 1020,
-    },
-  },
-};
-
-const OFFLINE_PINCODE_DIRECTORY: Record<
-  string,
-  { postOffice: string; district: string; state: string }
-> = {
-  '452001': { postOffice: 'Indore G.P.O.', district: 'Indore', state: 'Madhya Pradesh' },
-  '462001': { postOffice: 'Bhopal G.P.O.', district: 'Bhopal', state: 'Madhya Pradesh' },
-  '400001': { postOffice: 'Mumbai G.P.O.', district: 'Mumbai', state: 'Maharashtra' },
-  '110001': { postOffice: 'New Delhi G.P.O.', district: 'New Delhi', state: 'Delhi' },
-  '560001': { postOffice: 'Bengaluru G.P.O.', district: 'Bengaluru Urban', state: 'Karnataka' },
-  '380015': { postOffice: 'Polytechnic Ahmedabad', district: 'Ahmedabad', state: 'Gujarat' },
-};
-
-app.get('/api/verify/barcode/:barcode', async (req, res) => {
-  const barcode = String(req.params.barcode || '').replace(/\D/g, '');
-  if (!barcode || barcode.length < 8 || barcode.length > 14) {
-    res.status(400).json({ error: 'Enter a valid 8 to 14 digit EAN/UPC barcode.' });
-    return;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4500);
-    const apiRes = await fetch(
-      `https://in.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json`,
-      {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'LabelSure-Compliance/1.0 (https://labelsure.local)' },
-      },
-    );
-    clearTimeout(timeout);
-
-    if (apiRes.ok) {
-      const json = (await apiRes.json()) as {
-        status?: number;
-        product?: {
-          product_name?: string;
-          brands?: string;
-          quantity?: string;
-          ingredients_text?: string;
-          nutriments?: Record<string, number>;
-        };
-      };
-
-      if (json.status === 1 && json.product) {
-        const p = json.product;
-        const n = p.nutriments || {};
-        const result: BarcodeVerificationResult = {
-          found: true,
-          source: 'openfoodfacts_live',
-          barcode,
-          productName: p.product_name || `Product ${barcode}`,
-          brand: p.brands || 'Unknown Brand',
-          netQuantity: p.quantity ? `NET WEIGHT: ${p.quantity}` : 'NET WEIGHT: 100g',
-          ingredientsText: p.ingredients_text
-            ? `INGREDIENTS: ${p.ingredients_text}`
-            : 'INGREDIENTS: Not listed in Open Food Facts record.',
-          nutritionProfile: {
-            servingBasis: 'per 100g',
-            energyKcal: Math.round(Number(n['energy-kcal_100g'] ?? n['energy-kcal'] ?? 0)),
-            proteinG: Number((Number(n['proteins_100g'] ?? 0)).toFixed(1)),
-            totalFatG: Number((Number(n['fat_100g'] ?? 0)).toFixed(1)),
-            saturatedFatG: Number((Number(n['saturated-fat_100g'] ?? 0)).toFixed(1)),
-            transFatG: Number((Number(n['trans-fat_100g'] ?? 0)).toFixed(2)),
-            carbohydratesG: Number((Number(n['carbohydrates_100g'] ?? 0)).toFixed(1)),
-            addedSugarG: Number((Number(n['sugars_100g'] ?? 0)).toFixed(1)),
-            sodiumMg: Math.round(
-              Number(n['sodium_100g'] ?? (n['salt_100g'] ? Number(n['salt_100g']) * 0.4 : 0)) *
-                1000,
-            ),
-          },
-        };
-        res.json(result);
-        return;
-      }
-    }
-  } catch {
-    // Fall through cleanly to deterministic local Indian SKU catalog if outbound network is restricted
-  }
-
-  const fallback = OFFLINE_BARCODE_FALLBACK[barcode];
-  if (fallback) {
-    res.json(fallback);
-    return;
-  }
-
-  res.status(404).json({
-    error: `Barcode ${barcode} not found in Open Food Facts India registry or offline catalog.`,
+  res.json({
+    status: 'ok',
+    service: 'LabelSure Screening Verification API',
+    activeRuleSetVersion: publishedRuleSets[0]?.versionId ?? 'LMPC-2011-v1.0.0',
   });
 });
 
-app.get('/api/verify/pincode/:pincode', async (req, res) => {
-  const pincode = String(req.params.pincode || '').replace(/\D/g, '');
-  if (!/^\d{6}$/.test(pincode)) {
-    res.status(400).json({ error: 'Indian PIN code must be exactly 6 digits.' });
-    return;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4500);
-    const apiRes = await fetch(`https://api.postalpincode.in/pincode/${pincode}`, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'LabelSure-Compliance/1.0' },
+app.get('/api/analyses', (req, res) => {
+  const { role, actorId } = resolveRequestRole(req);
+  if (role === 'VISITOR') {
+    res.status(403).json({
+      errorCode: 'ERR-08',
+      error: 'ERR-08: Unauthenticated visitors cannot access private analyses or reports (AUTH-01).',
     });
-    clearTimeout(timeout);
-
-    if (apiRes.ok) {
-      const json = (await apiRes.json()) as Array<{
-        Status?: string;
-        Message?: string;
-        PostOffice?: Array<{ Name: string; District: string; State: string }>;
-      }>;
-      const entry = json?.[0];
-      if (entry?.Status === 'Success' && entry.PostOffice && entry.PostOffice.length > 0) {
-        const po = entry.PostOffice[0];
-        const result: PinCodeVerificationResult = {
-          valid: true,
-          source: 'indiapost_live',
-          pincode,
-          postOffice: po.Name,
-          district: po.District,
-          state: po.State,
-          message: `Verified via India Post live API: ${po.Name}, ${po.District}, ${po.State}.`,
-        };
-        res.json(result);
-        return;
-      }
-    }
-  } catch {
-    // Fall through to deterministic India Post directory fallback
-  }
-
-  const local = OFFLINE_PINCODE_DIRECTORY[pincode];
-  if (local) {
-    const result: PinCodeVerificationResult = {
-      valid: true,
-      source: 'offline_directory_fallback',
-      pincode,
-      postOffice: local.postOffice,
-      district: local.district,
-      state: local.state,
-      message: `Verified via deterministic PIN directory: ${local.postOffice}, ${local.district}, ${local.state}.`,
-    };
-    res.json(result);
     return;
   }
 
-  // Validate structural 6-digit Indian PIN region code (first digit 1..8)
-  const regionMap: Record<string, string> = {
-    '1': 'Northern Postal Zone (Delhi/HR/PB/HP/JK)',
-    '2': 'Northern Postal Zone (UP/UK)',
-    '3': 'Western Postal Zone (RJ/GJ)',
-    '4': 'Western Postal Zone (MH/MP/CG/GA)',
-    '5': 'Southern Postal Zone (AP/TS/KA)',
-    '6': 'Southern Postal Zone (TN/KL)',
-    '7': 'Eastern Postal Zone (WB/OR/NE)',
-    '8': 'Eastern Postal Zone (BR/JH)',
-  };
-  const zone = regionMap[pincode[0]];
-  if (zone) {
-    res.json({
-      valid: true,
-      source: 'offline_directory_fallback',
-      pincode,
-      postOffice: `Postal Circle ${pincode.slice(0, 3)}`,
-      district: 'Verified Postal Zone',
-      state: zone,
-      message: `PIN ${pincode} structurally valid under ${zone}.`,
-    } satisfies PinCodeVerificationResult);
+  const session = DEMO_SESSIONS[role];
+  const authorized = [...persistedAnalyses.values()]
+    .filter((item) => canAccessRecord({ ...session, actorId }, item))
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  res.json({ analyses: authorized });
+});
+
+app.post('/api/analyses', (req, res) => {
+  const { role } = resolveRequestRole(req);
+  const perms = getRolePermissions(role);
+  if (!perms.canRunAnalysis) {
+    res.status(403).json({
+      errorCode: 'ERR-08',
+      error: 'ERR-08: Authentication required to store analysis records.',
+    });
     return;
   }
 
-  res.status(404).json({
-    error: `PIN code ${pincode} is not a valid Indian postal index (first digit must be 1–8).`,
+  const { report } = req.body as { report?: InspectionReport };
+  if (!report || !report.analysisId) {
+    res.status(400).json({ error: 'Invalid analysis report payload.' });
+    return;
+  }
+
+  persistedAnalyses.set(report.analysisId, report);
+  res.json({ saved: true, analysisId: report.analysisId });
+});
+
+app.get('/api/rules/versions', (_req, res) => {
+  res.json({
+    activeVersionId: publishedRuleSets[0]?.versionId,
+    versions: publishedRuleSets,
+    auditEvents: auditLogStore,
   });
 });
 
-app.post('/api/verify/fssai', (req, res) => {
-  const { licenseNumber = '' } = req.body as { licenseNumber?: string };
-  const decoded = decodeFssaiLicense(String(licenseNumber), false);
-  res.json(decoded);
+app.post('/api/rules/publish', (req, res) => {
+  const { role, actorId } = resolveRequestRole(req);
+  const perms = getRolePermissions(role);
+  if (!perms.canPublishRuleVersion) {
+    auditLogStore.unshift({
+      eventId: `AUD-${Date.now()}`,
+      actorId,
+      actorRole: role,
+      action: 'ACCESS_DENIED',
+      target: 'RULE_SET_PUBLISH',
+      timestamp: new Date().toISOString(),
+      outcome: 'DENIED',
+      details: `Role ${role} attempted to publish rule-set version without MAINTAINER privileges (ERR-08).`,
+    });
+    res.status(403).json({
+      errorCode: 'ERR-08',
+      error: 'ERR-08: Only Rule Maintainer / Administrator can publish rule-set versions.',
+    });
+    return;
+  }
+
+  const { versionId, releaseNotes, rules } = req.body as {
+    versionId: string;
+    releaseNotes?: string;
+    rules: ComplianceRule[];
+  };
+  if (!versionId || !Array.isArray(rules)) {
+    res.status(400).json({ error: 'versionId and rules[] are required.' });
+    return;
+  }
+
+  const publishedSnapshot: RuleSetVersion = {
+    versionId,
+    publishedAt: new Date().toISOString(),
+    publishedBy: actorId,
+    releaseNotes: releaseNotes || `Published rule-set ${versionId}`,
+    rules: rules.map((r) => ({ ...r, status: 'PUBLISHED' as const })),
+  };
+
+  publishedRuleSets.unshift(publishedSnapshot);
+  auditLogStore.unshift({
+    eventId: `AUD-${Date.now()}`,
+    actorId,
+    actorRole: role,
+    action: 'RULE_SET_PUBLISHED',
+    target: versionId,
+    timestamp: publishedSnapshot.publishedAt,
+    outcome: 'SUCCESS',
+    details: publishedSnapshot.releaseNotes,
+  });
+
+  res.json({ ruleSetVersion: publishedSnapshot });
 });
+
+interface IncomingSidePayload {
+  imageId?: string;
+  fileName?: string;
+  mimeType?: string;
+  sideLabel?: PackageSideLabel;
+  imageBase64?: string;
+  presetImagePath?: string;
+}
 
 app.post('/api/analyze-label', async (req, res) => {
+  const { role, actorId } = resolveRequestRole(req);
+  const perms = getRolePermissions(role);
+
+  if (!perms.canRunAnalysis) {
+    res.status(403).json({
+      errorCode: 'ERR-08',
+      error: 'ERR-08: Unauthenticated visitors cannot submit analyses.',
+    });
+    return;
+  }
+
+  const body = req.body as {
+    analysisId?: string;
+    images?: IncomingSidePayload[];
+    productContext: ProductContext;
+    rules?: ComplianceRule[];
+    ruleSetVersionId?: string;
+    sourceMode?: 'upload' | 'sample_preset';
+  };
+
+  const analysisId =
+    body.analysisId || `ANL-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  const productContext = body.productContext || {
+    brand: 'Unknown',
+    category: 'Packaged Food',
+    countryOfOrigin: 'India',
+    stateJurisdiction: 'Central LMPC 2011 + FSSAI 2020',
+    pdpAreaCm2: 150,
+  };
+  const ruleSetVersionId =
+    body.ruleSetVersionId || publishedRuleSets[0]?.versionId || 'LMPC-2011-v1.0.0';
+  const activeRules =
+    body.rules && body.rules.length > 0 ? body.rules : DEFAULT_COMPLIANCE_RULES;
+
   try {
-    const {
-      imageBase64,
-      mimeType,
-      presetImagePath,
-      productContext,
-      rules,
-      measuredWeightGrams,
-      sourceMode = 'upload',
-    } = req.body as {
-      imageBase64?: string;
-      mimeType?: string;
-      presetImagePath?: string;
-      productContext: ProductContext;
-      rules?: ComplianceRule[];
-      measuredWeightGrams?: number;
-      sourceMode?: 'upload' | 'camera' | 'sample_preset';
-    };
-
-    let resolvedBase64 = imageBase64;
-    let resolvedMime = mimeType || 'image/jpeg';
-
-    if (!resolvedBase64 && presetImagePath) {
-      const safeBasename = path.basename(presetImagePath);
-      const allowedDir = path.resolve(process.cwd(), 'src/assets/images');
-      const fullPath = path.join(allowedDir, safeBasename);
-      const buf = await fs.readFile(fullPath);
-      resolvedBase64 = buf.toString('base64');
-      resolvedMime = safeBasename.endsWith('.png') ? 'image/png' : 'image/jpeg';
-    }
-
-    if (!resolvedBase64) {
-      res.status(400).json({ error: 'Please provide an uploaded image or select a sample label.' });
+    const rawInputs = Array.isArray(body.images) ? body.images : [];
+    if (rawInputs.length === 0) {
+      const failed = buildFailedAnalysisReport({
+        analysisId,
+        ownerId: actorId,
+        ownerRole: role,
+        ruleSetVersionId,
+        sourceMode: body.sourceMode ?? 'upload',
+        productContext,
+        images: [],
+        errorDetail: {
+          code: 'ERR-01',
+          stage: 'INTAKE',
+          message: 'ERR-01: No package side images were supplied for analysis.',
+          guidance: 'Upload at least one valid JPG, PNG, or WEBP package side image (max 10 MB).',
+        },
+      });
+      res.status(400).json({ error: failed.errorDetail?.message, report: failed });
       return;
     }
 
-    // Strip data URL prefix if sent by client
-    const cleanBase64 = resolvedBase64.replace(/^data:[^;]+;base64,/, '');
+    const validatedSides: Array<{
+      meta: AnalysisImage;
+      cleanBase64: string;
+    }> = [];
+
+    for (let idx = 0; idx < rawInputs.length; idx++) {
+      const side = rawInputs[idx];
+      let resolvedBase64 = side.imageBase64;
+      let resolvedMime = side.mimeType || 'image/jpeg';
+      let resolvedFileName = side.fileName || `package_side_${idx + 1}.jpg`;
+      let previewUrl = '';
+
+      if (!resolvedBase64 && side.presetImagePath) {
+        const safeBasename = path.basename(side.presetImagePath);
+        const allowedDir = path.resolve(process.cwd(), 'src/assets/images');
+        const fullPath = path.join(allowedDir, safeBasename);
+        const buf = await fs.readFile(fullPath);
+        resolvedBase64 = buf.toString('base64');
+        resolvedMime = safeBasename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        resolvedFileName = safeBasename;
+        previewUrl = `/src/assets/images/${safeBasename}`;
+      }
+
+      if (!resolvedBase64) {
+        const failed = buildFailedAnalysisReport({
+          analysisId,
+          ownerId: actorId,
+          ownerRole: role,
+          ruleSetVersionId,
+          sourceMode: body.sourceMode ?? 'upload',
+          productContext,
+          images: [],
+          errorDetail: {
+            code: 'ERR-01',
+            stage: 'INTAKE',
+            message: `ERR-01: Side image "${resolvedFileName}" contained an empty payload.`,
+            guidance: 'Re-select a valid JPG, PNG, or WEBP package image (max 10 MB).',
+          },
+        });
+        res.status(400).json({ error: failed.errorDetail?.message, report: failed });
+        return;
+      }
+
+      const cleanBase64 = resolvedBase64.replace(/^data:[^;]+;base64,/, '');
+      const bytes = decodeBase64ToBytes(cleanBase64);
+      const validation = validateImageBuffer({
+        fileName: resolvedFileName,
+        mimeType: resolvedMime,
+        bytes,
+      });
+
+      if (!validation.valid) {
+        const failed = buildFailedAnalysisReport({
+          analysisId,
+          ownerId: actorId,
+          ownerRole: role,
+          ruleSetVersionId,
+          sourceMode: body.sourceMode ?? 'upload',
+          productContext,
+          images: [],
+          errorDetail: {
+            code: 'ERR-01',
+            stage: 'INTAKE',
+            message: validation.errorMessage || 'ERR-01: Invalid or corrupt image upload.',
+            guidance:
+              validation.guidance || 'Upload a valid JPG, PNG, or WEBP image under 10 MB.',
+          },
+        });
+        res.status(400).json({ error: failed.errorDetail?.message, report: failed });
+        return;
+      }
+
+      validatedSides.push({
+        cleanBase64,
+        meta: {
+          imageId: side.imageId || `img-${idx + 1}`,
+          fileName: resolvedFileName,
+          mimeType: resolvedMime,
+          sizeBytes: bytes.length,
+          sideLabel: side.sideLabel || (idx === 0 ? 'FRONT_PDP' : 'BACK_STATUTORY'),
+          previewUrl: previewUrl || `data:${resolvedMime};base64,${cleanBase64}`,
+        },
+      });
+    }
 
     const ai = getGeminiClient();
 
-    const prompt = `Analyze this packaged commodity label image for Indian Legal Metrology (LMPC Rules 2011) and FSSAI Labelling & Display compliance.
-Product context: Brand=${productContext?.brand || 'Unknown'}, Category=${productContext?.category || 'Packaged Food'}, Country=${productContext?.countryOfOrigin || 'India'}.
+    const sideInventory = validatedSides
+      .map((s, idx) => `Image ${idx}: sideLabel=${s.meta.sideLabel}, fileName=${s.meta.fileName}`)
+      .join('\n');
 
-Extract the following target fields if visible on the label, mapping each to one of these spatial regions:
-PRODUCT_HEADER, STATUTORY_PANEL, DATE_BOX, MANUFACTURER_BOX, INGREDIENTS_BOX.
-Target keys:
-- product_name
-- net_quantity
-- mrp_usp (include MRP, currency symbol, inclusive of all taxes text, and USP if present)
-- mfd_use_by (combine MFD and USE BY / EXPIRY text)
-- batch_number
-- fssai_license
-- manufacturer_details (registered company name, address, and 6-digit PIN)
-- ingredients_declaration (also note if any FSSAI Lic. No. appears inside the ingredients block!)
+    const prompt = `Analyze these ${validatedSides.length} packaged commodity image(s) for Indian Legal Metrology (LMPC Rules 2011) and FSSAI Labelling & Display screening.
+Product context: Brand=${productContext.brand}, Category=${productContext.category}, Country=${productContext.countryOfOrigin}.
+Uploaded package sides:
+${sideInventory}
 
-For each field, return:
-- key (one of the 8 keys above)
-- rawText (exact OCR string observed, preserving any glare artifacts or Devanagari/Indic text)
-- region (one of the 5 spatial regions)
-- confidence (0.0 to 1.0 realistic OCR legibility score; use < 0.85 if blurry, occluded, or glare-damaged)
-- fontHeightMm (estimated printed font height in mm, e.g. 1.5 to 5.0)
-- bbox: [y_min, x_min, y_max, x_max] normalized 0..1000 coordinates on the image.
+Extract ONLY the fields actually visible on the uploaded image(s). NEVER invent or guess missing declarations.
+Map each extracted field to:
+- key: product_name | net_quantity | mrp_usp | mfd_use_by | batch_number | fssai_license | manufacturer_details | ingredients_declaration
+- imageIndex: 0-based index of the image where the field appears
+- region: PRODUCT_HEADER | STATUTORY_PANEL | DATE_BOX | MANUFACTURER_BOX | INGREDIENTS_BOX
+- rawText: exact OCR text observed (preserve foil glare characters and Devanagari/Indic script)
+- confidence: 0.0 to 1.0 realistic OCR legibility score (< 0.85 if blurry, occluded, or glare-damaged)
+- fontHeightMm: estimated printed numeral/font height in mm
+- y_min, x_min, y_max, x_max: normalized 0..1000 bounding box coordinates on that image.`;
 
-Also extract nutritional facts per 100g/100ml if a Nutrition Information table is visible.`;
+    const parts = [
+      ...validatedSides.map((s) => ({
+        inlineData: {
+          mimeType: s.meta.mimeType,
+          data: s.cleanBase64,
+        },
+      })),
+      { text: prompt },
+    ];
 
     const response = await ai.models.generateContent({
       model: 'gemini-4-hydrogen',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: resolvedMime,
-              data: cleanBase64,
-            },
-          },
-          { text: prompt },
-        ],
-      },
+      contents: { parts },
       config: {
         systemInstruction:
-          'You are a precision computer-vision OCR & regulatory label extraction engine. Extract exact label text and accurate 0-1000 bounding boxes without inventing missing fields.',
+          'You are a precision OCR and structured label extraction engine. Extract exact visible text and 0-1000 bounding boxes per image side. Never hallucinate or fabricate missing fields.',
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -416,6 +406,7 @@ Also extract nutritional facts per 100g/100ml if a Nutrition Information table i
                 type: Type.OBJECT,
                 properties: {
                   key: { type: Type.STRING },
+                  imageIndex: { type: Type.INTEGER },
                   rawText: { type: Type.STRING },
                   region: { type: Type.STRING },
                   confidence: { type: Type.NUMBER },
@@ -425,22 +416,17 @@ Also extract nutritional facts per 100g/100ml if a Nutrition Information table i
                   y_max: { type: Type.INTEGER },
                   x_max: { type: Type.INTEGER },
                 },
-                required: ['key', 'rawText', 'region', 'confidence', 'y_min', 'x_min', 'y_max', 'x_max'],
-              },
-            },
-            nutrition: {
-              type: Type.OBJECT,
-              properties: {
-                found: { type: Type.BOOLEAN },
-                servingBasis: { type: Type.STRING },
-                energyKcal: { type: Type.NUMBER },
-                proteinG: { type: Type.NUMBER },
-                totalFatG: { type: Type.NUMBER },
-                saturatedFatG: { type: Type.NUMBER },
-                transFatG: { type: Type.NUMBER },
-                carbohydratesG: { type: Type.NUMBER },
-                addedSugarG: { type: Type.NUMBER },
-                sodiumMg: { type: Type.NUMBER },
+                required: [
+                  'key',
+                  'imageIndex',
+                  'rawText',
+                  'region',
+                  'confidence',
+                  'y_min',
+                  'x_min',
+                  'y_max',
+                  'x_max',
+                ],
               },
             },
           },
@@ -452,6 +438,7 @@ Also extract nutritional facts per 100g/100ml if a Nutrition Information table i
     const parsed = JSON.parse((response.text ?? '{}').trim()) as {
       fields?: Array<{
         key: string;
+        imageIndex?: number;
         rawText: string;
         region: string;
         confidence: number;
@@ -461,31 +448,26 @@ Also extract nutritional facts per 100g/100ml if a Nutrition Information table i
         y_max: number;
         x_max: number;
       }>;
-      nutrition?: {
-        found?: boolean;
-        servingBasis?: string;
-        energyKcal?: number;
-        proteinG?: number;
-        totalFatG?: number;
-        saturatedFatG?: number;
-        transFatG?: number;
-        carbohydratesG?: number;
-        addedSugarG?: number;
-        sodiumMg?: number;
-      };
     };
 
     const extractedFields: ExtractedField[] = (parsed.fields || [])
-      .filter((f) => VALID_KEYS.includes(f.key as FieldKey))
+      .filter((f) => VALID_KEYS.includes(f.key as FieldKey) && f.rawText.trim().length > 0)
       .map((f, idx) => {
         const key = f.key as FieldKey;
         const region = VALID_REGIONS.includes(f.region as SpatialRegion)
           ? (f.region as SpatialRegion)
           : 'STATUTORY_PANEL';
+        const sideIdx = Math.max(
+          0,
+          Math.min(validatedSides.length - 1, Number(f.imageIndex) || 0),
+        );
+        const linkedSide = validatedSides[sideIdx].meta;
 
         let normalizedText = f.rawText;
         let glareNormalized = false;
         let glareRawSample: string | undefined;
+        let extractionStatus: ExtractionStatus = 'EXTRACTED';
+        let ambiguityReason: string | undefined;
 
         if (key === 'mfd_use_by') {
           const glare = normalizeGlareDateText(f.rawText);
@@ -493,6 +475,11 @@ Also extract nutritional facts per 100g/100ml if a Nutrition Information table i
             normalizedText = glare.normalized;
             glareNormalized = true;
             glareRawSample = f.rawText;
+          }
+          const dateCheck = extractDatesFromText(normalizedText);
+          if (dateCheck.isAmbiguous) {
+            extractionStatus = 'AMBIGUOUS';
+            ambiguityReason = dateCheck.ambiguityReason;
           }
         }
 
@@ -505,6 +492,7 @@ Also extract nutritional facts per 100g/100ml if a Nutrition Information table i
           rawText: f.rawText,
           normalizedText,
           region,
+          extractionStatus,
           confidence: Math.max(0, Math.min(1, Number(f.confidence) || 0.9)),
           fontHeightMm: Number(f.fontHeightMm) || 2.0,
           bbox: {
@@ -513,205 +501,53 @@ Also extract nutritional facts per 100g/100ml if a Nutrition Information table i
             x_max: clamp(f.x_max),
             y_max: clamp(f.y_max),
           },
+          sourceImageId: linkedSide.imageId,
+          sourceSideLabel: linkedSide.sideLabel,
           glareNormalized,
           glareRawSample,
+          ambiguityReason,
         };
       });
 
-    let nutritionProfile: NutritionProfile | undefined;
-    if (parsed.nutrition?.found) {
-      nutritionProfile = {
-        servingBasis:
-          parsed.nutrition.servingBasis === 'per 100ml' ? 'per 100ml' : 'per 100g',
-        energyKcal: Number(parsed.nutrition.energyKcal) || 0,
-        proteinG: Number(parsed.nutrition.proteinG) || 0,
-        totalFatG: Number(parsed.nutrition.totalFatG) || 0,
-        saturatedFatG: Number(parsed.nutrition.saturatedFatG) || 0,
-        transFatG: Number(parsed.nutrition.transFatG) || 0,
-        carbohydratesG: Number(parsed.nutrition.carbohydratesG) || 0,
-        addedSugarG: Number(parsed.nutrition.addedSugarG) || 0,
-        sodiumMg: Number(parsed.nutrition.sodiumMg) || 0,
-      };
-    }
-
     const report = evaluatePackageCompliance({
-      inspectionId: `INSP-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-      sourceMode,
-      imageUrl: presetImagePath || undefined,
+      analysisId,
+      ownerId: actorId,
+      ownerRole: role,
+      ruleSetVersionId,
+      sourceMode: body.sourceMode ?? 'upload',
+      images: validatedSides.map((s) => s.meta),
       productContext,
       fields: extractedFields,
-      rules: rules && rules.length > 0 ? rules : DEFAULT_COMPLIANCE_RULES,
-      nutritionProfile,
-      measuredWeightGrams,
+      rules: activeRules,
+      ocrMetadata: {
+        engine: 'Gemini Vision Multilingual OCR',
+        engineVersion: 'gemini-4-hydrogen',
+        languages: ['en', 'hi'],
+      },
     });
 
+    persistedAnalyses.set(report.analysisId, report);
     res.json({ report });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to analyze package label';
     console.error('Label analysis error:', message);
-    res.status(500).json({ error: message });
-  }
-});
-
-app.post('/api/ecommerce/audit', (req, res) => {
-  try {
-    const {
-      marketplace = 'Seller Pre-Listing Gateway',
-      batchId = `BATCH-${Date.now()}`,
-      items = [],
-      rules = DEFAULT_COMPLIANCE_RULES,
-    } = req.body as {
-      marketplace?: string;
-      batchId?: string;
-      items?: Array<{
-        sku: string;
-        productName: string;
-        declaredNetQuantity: string;
-        mrpDeclaration: string;
-        mfdDate: string;
-        useByDate: string;
-        fssaiLicense: string;
-        manufacturerAddress: string;
-        ingredientsText: string;
-        measuredScaleWeightGrams?: number;
-      }>;
-      rules?: ComplianceRule[];
-    };
-
-    if (!Array.isArray(items) || items.length === 0) {
-      res.status(400).json({ error: 'Provide at least one SKU item in items[] array.' });
-      return;
-    }
-
-    const results = items.map((item, idx) => {
-      const fields: ExtractedField[] = [
-        {
-          id: `${item.sku}-name-${idx}`,
-          key: 'product_name',
-          label: 'Product Name',
-          rawText: item.productName || '',
-          normalizedText: item.productName || '',
-          region: 'PRODUCT_HEADER',
-          confidence: 0.99,
-          fontHeightMm: 4.0,
-          bbox: { x_min: 50, y_min: 50, x_max: 900, y_max: 140 },
-        },
-        {
-          id: `${item.sku}-qty-${idx}`,
-          key: 'net_quantity',
-          label: 'Net Quantity',
-          rawText: item.declaredNetQuantity || '',
-          normalizedText: item.declaredNetQuantity || '',
-          region: 'STATUTORY_PANEL',
-          confidence: 0.98,
-          fontHeightMm: 2.5,
-          bbox: { x_min: 50, y_min: 160, x_max: 450, y_max: 240 },
-        },
-        {
-          id: `${item.sku}-mrp-${idx}`,
-          key: 'mrp_usp',
-          label: 'MRP & USP',
-          rawText: item.mrpDeclaration || '',
-          normalizedText: item.mrpDeclaration || '',
-          region: 'STATUTORY_PANEL',
-          confidence: 0.97,
-          fontHeightMm: 2.2,
-          bbox: { x_min: 50, y_min: 250, x_max: 450, y_max: 330 },
-        },
-        {
-          id: `${item.sku}-date-${idx}`,
-          key: 'mfd_use_by',
-          label: 'MFD & Use By Date',
-          rawText: `MFD: ${item.mfdDate || ''} | USE BY: ${item.useByDate || ''}`,
-          normalizedText: `MFD: ${item.mfdDate || ''} | USE BY: ${item.useByDate || ''}`,
-          region: 'DATE_BOX',
-          confidence: 0.95,
-          fontHeightMm: 2.0,
-          bbox: { x_min: 500, y_min: 160, x_max: 900, y_max: 250 },
-        },
-        {
-          id: `${item.sku}-fssai-${idx}`,
-          key: 'fssai_license',
-          label: 'FSSAI License Number',
-          rawText: `FSSAI Lic. No. ${item.fssaiLicense || ''}`,
-          normalizedText: `FSSAI Lic. No. ${item.fssaiLicense || ''}`,
-          region: 'MANUFACTURER_BOX',
-          confidence: 0.96,
-          fontHeightMm: 1.8,
-          bbox: { x_min: 50, y_min: 580, x_max: 450, y_max: 660 },
-        },
-        {
-          id: `${item.sku}-mfg-${idx}`,
-          key: 'manufacturer_details',
-          label: 'Manufacturer Details',
-          rawText: item.manufacturerAddress || '',
-          normalizedText: item.manufacturerAddress || '',
-          region: 'MANUFACTURER_BOX',
-          confidence: 0.96,
-          fontHeightMm: 1.7,
-          bbox: { x_min: 50, y_min: 670, x_max: 900, y_max: 780 },
-        },
-        {
-          id: `${item.sku}-ing-${idx}`,
-          key: 'ingredients_declaration',
-          label: 'Ingredients Declaration',
-          rawText: item.ingredientsText || '',
-          normalizedText: item.ingredientsText || '',
-          region: 'INGREDIENTS_BOX',
-          confidence: 0.95,
-          fontHeightMm: 1.5,
-          bbox: { x_min: 50, y_min: 360, x_max: 900, y_max: 550 },
-        },
-      ];
-
-      const evaluation = evaluatePackageCompliance({
-        inspectionId: `API-${item.sku}`,
-        sourceMode: 'upload',
-        productContext: {
-          brand: marketplace,
-          category: 'Packaged Food',
-          countryOfOrigin: 'India',
-          stateJurisdiction: 'Central LMPC 2011 + FSSAI 2020',
-        },
-        fields,
-        rules,
-        measuredWeightGrams: item.measuredScaleWeightGrams,
-      });
-
-      const failedChecks = evaluation.checkpoints
-        .filter((c) => c.status === 'FAIL' || c.status === 'WARNING')
-        .map((c) => ({
-          ruleId: c.ruleId,
-          field: c.label,
-          status: c.status,
-          rationale: c.rationale,
-          correctiveAction: c.correctiveAction,
-        }));
-
-      return {
-        sku: item.sku,
-        productName: item.productName,
-        listingAllowed: evaluation.overallStatus === 'PASS',
-        overallStatus: evaluation.overallStatus,
-        mpeCheck: evaluation.mpeEvaluation || null,
-        summaryCounts: evaluation.summaryCounts,
-        violations: failedChecks,
-      };
+    const failed = buildFailedAnalysisReport({
+      analysisId,
+      ownerId: actorId,
+      ownerRole: role,
+      ruleSetVersionId,
+      sourceMode: body.sourceMode ?? 'upload',
+      productContext,
+      images: [],
+      errorDetail: {
+        code: 'ERR-02',
+        stage: 'OCR',
+        message: `ERR-02: OCR processing error — ${message}`,
+        guidance:
+          'Verify image clarity and GEMINI_API_KEY configuration, or test deterministic screening with the SRS Acceptance Fixtures.',
+      },
     });
-
-    res.json({
-      httpStatus: 200,
-      marketplace,
-      batchId,
-      evaluatedAt: new Date().toISOString(),
-      totalSkus: results.length,
-      approvedForListing: results.filter((r) => r.listingAllowed).length,
-      blockedForViolation: results.filter((r) => !r.listingAllowed).length,
-      results,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Bulk audit failed';
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: message, report: failed });
   }
 });
 

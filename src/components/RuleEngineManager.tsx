@@ -4,50 +4,71 @@ import {
   CheckCircle2,
   Code2,
   Download,
+  History,
+  Lock,
+  Rocket,
   Search,
   Sliders,
   XCircle,
 } from 'lucide-react';
 import { LMPC_STATUTORY_MATRIX } from '../data/lmpcStatutoryMatrix';
-import {
-  calculateMpeTolerance,
-  getRequiredFontHeightMm,
-  validateRule12SiUnit,
-} from '../lib/complianceEngine';
-import type { ComplianceRule } from '../types/compliance';
+import { getRequiredFontHeightMm, validateRule12SiUnit } from '../lib/complianceEngine';
+import { getRolePermissions } from '../lib/rbac';
+import type {
+  AuditEvent,
+  ComplianceRule,
+  RuleSetVersion,
+  UserRole,
+} from '../types/compliance';
 
 interface RuleEngineManagerProps {
-  rules: ComplianceRule[];
-  onToggleRule: (ruleId: string) => void;
-  onUpdateRuleParameters: (
+  activeRole: UserRole;
+  publishedRuleSets: RuleSetVersion[];
+  draftRules: ComplianceRule[];
+  auditEvents: AuditEvent[];
+  onToggleDraftRule: (ruleId: string) => void;
+  onUpdateDraftRuleParameters: (
     ruleId: string,
     paramsJson: Record<string, string | number | boolean | string[]>,
   ) => void;
+  onPublishNewRuleSetVersion: (releaseNotes: string) => string;
   activePdpAreaCm2: number;
   onChangePdpAreaCm2: (area: number) => void;
 }
 
-type MatrixTab = 'rules' | 'first_schedule' | 'second_schedule' | 'rule12_rule6';
+type MatrixTab = 'rules' | 'second_schedule' | 'rule12_rule6' | 'audit_log';
 
 export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
-  rules,
-  onToggleRule,
-  onUpdateRuleParameters,
+  activeRole,
+  publishedRuleSets,
+  draftRules,
+  auditEvents,
+  onToggleDraftRule,
+  onUpdateDraftRuleParameters,
+  onPublishNewRuleSetVersion,
   activePdpAreaCm2,
   onChangePdpAreaCm2,
 }) => {
+  const permissions = getRolePermissions(activeRole);
+  const activePublished = publishedRuleSets[0];
+
   const [matrixTab, setMatrixTab] = useState<MatrixTab>('rules');
+  const [viewMode, setViewMode] = useState<'PUBLISHED' | 'DRAFT'>(
+    permissions.canEditDraftRules ? 'DRAFT' : 'PUBLISHED',
+  );
   const [regFilter, setRegFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRuleId, setSelectedRuleId] = useState<string>(rules[0]?.ruleId ?? '');
+  const [selectedRuleId, setSelectedRuleId] = useState<string>(draftRules[0]?.ruleId ?? '');
   const [jsonDraft, setJsonDraft] = useState<string>(
-    JSON.stringify(rules[0]?.parameters ?? {}, null, 2),
+    JSON.stringify(draftRules[0]?.parameters ?? {}, null, 2),
   );
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [savedToast, setSavedToast] = useState(false);
+  const [releaseNotes, setReleaseNotes] = useState(
+    'Updated LMPC / FSSAI parameter thresholds and draft rule activation.',
+  );
+  const [publishedBanner, setPublishedBanner] = useState<string | null>(null);
 
-  // Interactive calculators inside statutory matrix views
-  const [mpeTestWeight, setMpeTestWeight] = useState<number>(120);
   const [siTestInput, setSiTestInput] = useState<string>('120 gms');
   const [selectedCategory, setSelectedCategory] = useState<string>('Packaged Food');
 
@@ -59,7 +80,9 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
     'FSSAI Labelling & Display 2020',
   ];
 
-  const filteredRules = rules.filter((r) => {
+  const sourceRules = viewMode === 'DRAFT' ? draftRules : activePublished?.rules ?? draftRules;
+
+  const filteredRules = sourceRules.filter((r) => {
     const matchesReg = regFilter === 'ALL' || r.regulation === regFilter;
     const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
@@ -70,7 +93,8 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
     return matchesReg && matchesSearch;
   });
 
-  const selectedRule = rules.find((r) => r.ruleId === selectedRuleId) ?? filteredRules[0];
+  const selectedRule =
+    sourceRules.find((r) => r.ruleId === selectedRuleId) ?? filteredRules[0];
 
   const handleSelectRule = (rule: ComplianceRule) => {
     setSelectedRuleId(rule.ruleId);
@@ -80,20 +104,28 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
   };
 
   const handleSaveJson = () => {
-    if (!selectedRule) return;
+    if (!selectedRule || !permissions.canEditDraftRules || viewMode !== 'DRAFT') return;
     try {
       const parsed = JSON.parse(jsonDraft);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         setJsonError('Rule parameters must be a valid JSON object.');
         return;
       }
-      onUpdateRuleParameters(selectedRule.ruleId, parsed);
+      onUpdateDraftRuleParameters(selectedRule.ruleId, parsed);
       setJsonError(null);
       setSavedToast(true);
       setTimeout(() => setSavedToast(false), 2000);
     } catch {
       setJsonError('Invalid JSON syntax. Please verify quotes and commas.');
     }
+  };
+
+  const handlePublishClick = () => {
+    if (!permissions.canPublishRuleVersion) return;
+    const newVersionId = onPublishNewRuleSetVersion(releaseNotes);
+    setPublishedBanner(
+      `Published immutable rule-set ${newVersionId}. Existing persisted reports retain their original rule_set_version_id (BR-08 / AT-10).`,
+    );
   };
 
   const handleDownloadMatrixJson = () => {
@@ -108,54 +140,109 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const mpePreview = calculateMpeTolerance(mpeTestWeight, mpeTestWeight);
   const pdpFontSpec = getRequiredFontHeightMm(activePdpAreaCm2);
   const siPreview = validateRule12SiUnit(siTestInput);
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] p-4 shadow-[0_1px_3px_rgba(46,46,46,0.04)]">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="font-display text-lg font-bold tracking-tight text-slate-900">
-              Versioned Rule Engine &amp; Statutory Lookup Matrix
+            <h1 className="font-display text-lg font-bold tracking-tight text-[#2E2E2E]">
+              Versioned Rule Repository &amp; Maintainer Console
             </h1>
-            <p className="text-xs text-slate-500">
-              LMPC Rules 2011 (2017/2022 Amendments) &amp; FSSAI 2020 rules-as-data, First &amp;
-              Second Schedules, and Rule 12 SI unit registry.
+            <p className="text-xs text-[#2E2E2E]/75">
+              Active Published Rule-Set:{' '}
+              <span
+                data-testid="active-ruleset-version"
+                className="font-mono font-semibold text-[#7D4047]"
+              >
+                {activePublished?.versionId}
+              </span>{' '}
+              · Only reviewed, published rules execute at runtime (BR-01)
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="font-mono text-xs tabular-nums text-slate-600">
-              {rules.filter((r) => r.enabled).length} / {rules.length} rules active
+            <span className="font-mono text-xs tabular-nums text-[#2E2E2E]/75">
+              {publishedRuleSets.length} published version{publishedRuleSets.length === 1 ? '' : 's'}
             </span>
             <button
               type="button"
               onClick={handleDownloadMatrixJson}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50 whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#DDD5CD] bg-[#F1ECE6] px-3 py-1.5 text-xs font-medium text-[#2E2E2E] hover:bg-[#DDD5CD]/50 whitespace-nowrap shrink-0"
             >
               <Download className="h-3.5 w-3.5" />
-              Download lmpc_statutory_matrix.json
+              Export Statutory Matrix JSON
             </button>
           </div>
         </div>
 
-        {/* Sub-Navigation for Rules vs Statutory Schedules */}
-        <div className="mt-4 flex flex-wrap items-center gap-1 rounded-md bg-slate-100 p-1">
+        {/* Maintainer Publish Bar (Visible in Rule Repository for Maintainer; Read-Only Notice otherwise) */}
+        {permissions.canPublishRuleVersion ? (
+          <div className="mt-4 flex flex-wrap items-end justify-between gap-3 rounded-xl border border-[#7D4047]/35 bg-[#7D4047]/10 p-3">
+            <div className="flex-1 min-w-[260px]">
+              <label
+                htmlFor="publish-release-notes"
+                className="block text-xs font-semibold text-[#2E2E2E]"
+              >
+                Publish Draft Rule-Set as New Immutable Version (FR-020 / BR-02)
+              </label>
+              <input
+                id="publish-release-notes"
+                type="text"
+                value={releaseNotes}
+                onChange={(e) => setReleaseNotes(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-[#DDD5CD] bg-[#FAF7F2] px-2.5 py-1.5 text-xs text-[#2E2E2E] focus:border-[#7D4047] focus:outline-none"
+              />
+            </div>
+            <button
+              type="button"
+              data-testid="publish-ruleset-btn"
+              onClick={handlePublishClick}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#7D4047] px-3.5 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#663238] whitespace-nowrap shrink-0"
+            >
+              <Rocket className="h-3.5 w-3.5" />
+              Publish New Rule-Set Version
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4 flex items-center gap-2 rounded-lg border border-[#DDD5CD] bg-[#F1ECE6] px-3 py-2.5 text-xs text-[#2E2E2E]">
+            <Lock className="h-4 w-4 text-[#7D4047] shrink-0" />
+            <span>
+              Read-only view for role <strong className="font-mono">{activeRole}</strong>. Switch to{' '}
+              <strong>Rule Maintainer / Administrator</strong> to edit draft rules, publish new
+              versions, or inspect the Audit Log (AUTH-04).
+            </span>
+          </div>
+        )}
+
+        {publishedBanner && (
+          <div
+            role="status"
+            data-testid="publish-success-banner"
+            className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900"
+          >
+            <CheckCircle2 className="h-4 w-4 text-emerald-700 shrink-0" />
+            <span>{publishedBanner}</span>
+          </div>
+        )}
+
+        {/* Sub-Navigation */}
+        <div className="mt-4 flex flex-wrap items-center gap-1 rounded-lg border border-[#DDD5CD] bg-[#DDD5CD]/45 p-1">
           {[
-            { id: 'rules' as const, label: 'Versioned Rules' },
-            { id: 'first_schedule' as const, label: 'First Schedule (MPE)' },
+            { id: 'rules' as const, label: 'Published & Draft Rules' },
             { id: 'second_schedule' as const, label: 'Second Schedule (Font Height)' },
             { id: 'rule12_rule6' as const, label: 'Rule 12 SI & Rule 6 Matrix' },
+            { id: 'audit_log' as const, label: `Audit Log (${auditEvents.length})` },
           ].map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setMatrixTab(tab.id)}
-              className={`rounded px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
                 matrixTab === tab.id
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-[#7D4047] text-[#FAF7F2] font-semibold shadow-xs'
+                  : 'text-[#2E2E2E]/80 hover:text-[#2E2E2E]'
               }`}
             >
               {tab.label}
@@ -164,33 +251,61 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
         </div>
 
         {matrixTab === 'rules' && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-            <div className="flex flex-wrap items-center gap-1 rounded-md bg-slate-100 p-1">
-              {regulations.map((reg) => (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#DDD5CD]/80 pt-4">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Published vs Draft Switcher */}
+              <div className="flex items-center rounded-lg border border-[#DDD5CD] bg-[#DDD5CD]/45 p-1">
                 <button
-                  key={reg}
                   type="button"
-                  onClick={() => setRegFilter(reg)}
-                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    regFilter === reg
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                  onClick={() => setViewMode('PUBLISHED')}
+                  className={`rounded-md px-2.5 py-1 text-xs font-semibold whitespace-nowrap shrink-0 ${
+                    viewMode === 'PUBLISHED'
+                      ? 'bg-[#FAF7F2] text-emerald-800 shadow-xs'
+                      : 'text-[#2E2E2E]/75 hover:text-[#2E2E2E]'
                   }`}
                 >
-                  {reg === 'ALL' ? 'All Regulations' : reg}
+                  Published ({activePublished?.versionId})
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setViewMode('DRAFT')}
+                  className={`rounded-md px-2.5 py-1 text-xs font-semibold whitespace-nowrap shrink-0 ${
+                    viewMode === 'DRAFT'
+                      ? 'bg-[#FAF7F2] text-[#7D4047] shadow-xs'
+                      : 'text-[#2E2E2E]/75 hover:text-[#2E2E2E]'
+                  }`}
+                >
+                  Draft Workspace
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1 rounded-lg border border-[#DDD5CD] bg-[#DDD5CD]/45 p-1">
+                {regulations.map((reg) => (
+                  <button
+                    key={reg}
+                    type="button"
+                    onClick={() => setRegFilter(reg)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                      regFilter === reg
+                        ? 'bg-[#FAF7F2] text-[#2E2E2E] font-semibold shadow-xs'
+                        : 'text-[#2E2E2E]/75 hover:text-[#2E2E2E]'
+                    }`}
+                  >
+                    {reg === 'ALL' ? 'All Regulations' : reg}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="relative w-full sm:w-64">
-              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[#2E2E2E]/50" />
               <input
                 type="search"
                 aria-label="Search compliance rules"
                 placeholder="Search rule ID or name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-md border border-slate-200 py-1.5 pl-8 pr-3 text-xs text-slate-900 focus:border-blue-700 focus:outline-none"
+                className="w-full rounded-lg border border-[#DDD5CD] bg-[#F1ECE6] py-1.5 pl-8 pr-3 text-xs text-[#2E2E2E] focus:border-[#7D4047] focus:outline-none"
               />
             </div>
           </div>
@@ -200,55 +315,64 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
       {/* Tab 1: Versioned Rules */}
       {matrixTab === 'rules' && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-          <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-200 lg:col-span-7">
+          <div className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] divide-y divide-[#DDD5CD] overflow-hidden shadow-[0_1px_3px_rgba(46,46,46,0.04)] lg:col-span-7">
             {filteredRules.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500">
+              <div className="p-8 text-center text-xs text-[#2E2E2E]/70">
                 No rules match your current filter.
               </div>
             ) : (
               filteredRules.map((rule) => {
                 const isSelected = selectedRule?.ruleId === rule.ruleId;
+                const canEditThisView = permissions.canEditDraftRules && viewMode === 'DRAFT';
                 return (
                   <div
                     key={rule.ruleId}
                     onClick={() => handleSelectRule(rule)}
                     className={`cursor-pointer p-4 transition-colors ${
-                      isSelected ? 'bg-blue-50/40' : 'hover:bg-slate-50'
+                      isSelected ? 'bg-[#7D4047]/10' : 'hover:bg-[#F1ECE6]'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-xs font-semibold text-blue-900">
+                          <span className="font-mono text-xs font-semibold text-[#7D4047]">
                             {rule.ruleId}
                           </span>
-                          <span className="text-xs text-slate-400">·</span>
-                          <span className="font-mono text-xs text-slate-500">{rule.version}</span>
-                          <span className="text-xs text-slate-400">·</span>
+                          <span className="text-xs text-[#2E2E2E]/40">·</span>
+                          <span className="font-mono text-xs text-[#2E2E2E]/65">{rule.version}</span>
+                          <span className="text-xs text-[#2E2E2E]/40">·</span>
+                          <span
+                            className={`font-mono text-[11px] font-semibold ${
+                              viewMode === 'PUBLISHED' ? 'text-emerald-700' : 'text-amber-800'
+                            }`}
+                          >
+                            {viewMode}
+                          </span>
+                          <span className="text-xs text-[#2E2E2E]/40">·</span>
                           <span
                             className={`text-xs font-semibold ${
                               rule.priority === 'CRITICAL'
                                 ? 'text-red-700'
                                 : rule.priority === 'HIGH'
-                                  ? 'text-amber-700'
-                                  : 'text-slate-600'
+                                  ? 'text-amber-800'
+                                  : 'text-[#2E2E2E]/70'
                             }`}
                           >
                             {rule.priority}
                           </span>
                         </div>
-                        <h2 className="mt-1 font-display text-sm font-semibold text-slate-900">
+                        <h2 className="mt-1 font-display text-sm font-semibold text-[#2E2E2E]">
                           {rule.name}
                         </h2>
-                        <p className="mt-1 text-xs text-slate-600 leading-relaxed">
+                        <p className="mt-1 text-xs text-[#2E2E2E]/80 leading-relaxed">
                           {rule.description}
                         </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#2E2E2E]/65">
                           <span>{rule.regulation}</span>
                           <span aria-hidden="true">·</span>
                           <span>{rule.citation}</span>
                           <span aria-hidden="true">·</span>
-                          <span>Category: {rule.category}</span>
+                          <span>Applicability: {rule.category}</span>
                         </div>
                       </div>
 
@@ -258,19 +382,20 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                           role="switch"
                           aria-checked={rule.enabled}
                           aria-label={`Toggle rule ${rule.ruleId}`}
+                          disabled={!canEditThisView}
                           data-testid={`toggle-rule-${rule.ruleId}`}
-                          onClick={() => onToggleRule(rule.ruleId)}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 ${
-                            rule.enabled ? 'bg-blue-900' : 'bg-slate-300'
+                          onClick={() => onToggleDraftRule(rule.ruleId)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7D4047] ${
+                            rule.enabled ? 'bg-[#7D4047]' : 'bg-[#DDD5CD]'
                           }`}
                         >
                           <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            className={`inline-block h-4 w-4 transform rounded-full bg-[#FAF7F2] transition-transform ${
                               rule.enabled ? 'translate-x-6' : 'translate-x-1'
                             }`}
                           />
                         </button>
-                        <span className="mt-1 block text-center font-mono text-[10px] text-slate-500">
+                        <span className="mt-1 block text-center font-mono text-[10px] text-[#2E2E2E]/65">
                           {rule.enabled ? 'ACTIVE' : 'OFF'}
                         </span>
                       </div>
@@ -281,193 +406,142 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
             )}
           </div>
 
-          <section
-            aria-labelledby="rule-json-editor-heading"
-            className="rounded-lg border border-slate-200 bg-white lg:col-span-5 lg:sticky lg:top-20"
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Code2 className="h-4 w-4 text-slate-600" />
-                <h2
-                  id="rule-json-editor-heading"
-                  className="font-display text-sm font-semibold text-slate-900"
-                >
-                  Rule JSON Definition
+          {/* Right Panel: JSON Definition & Published Versions History */}
+          <div className="space-y-6 lg:col-span-5">
+            <section
+              aria-labelledby="rule-json-editor-heading"
+              className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] overflow-hidden shadow-[0_1px_3px_rgba(46,46,46,0.04)]"
+            >
+              <div className="flex items-center justify-between border-b border-[#DDD5CD] bg-[#F1ECE6] px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Code2 className="h-4 w-4 text-[#7D4047]" />
+                  <h2
+                    id="rule-json-editor-heading"
+                    className="font-display text-sm font-semibold text-[#2E2E2E]"
+                  >
+                    Rule JSON Definition ({viewMode})
+                  </h2>
+                </div>
+                {selectedRule && (
+                  <span className="font-mono text-xs text-[#2E2E2E]/65">{selectedRule.version}</span>
+                )}
+              </div>
+
+              {selectedRule ? (
+                <div className="p-4 space-y-3">
+                  <div className="text-xs text-[#2E2E2E]/80 space-y-0.5">
+                    <p className="font-display text-sm font-semibold text-[#2E2E2E]">
+                      {selectedRule.name}
+                    </p>
+                    <p className="font-mono text-xs font-medium text-[#7D4047]">
+                      {selectedRule.ruleId}
+                    </p>
+                    <p>
+                      {selectedRule.regulation} · {selectedRule.citation}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="rule-params-textarea"
+                      className="flex items-center gap-1.5 text-xs font-medium text-[#2E2E2E]"
+                    >
+                      <Sliders className="h-3.5 w-3.5 text-[#7D4047]" />
+                      Machine-Readable Parameters (JSON)
+                    </label>
+                    <textarea
+                      id="rule-params-textarea"
+                      rows={8}
+                      readOnly={!permissions.canEditDraftRules || viewMode !== 'DRAFT'}
+                      value={jsonDraft}
+                      onChange={(e) => setJsonDraft(e.target.value)}
+                      className="mt-1.5 w-full rounded-lg border border-[#DDD5CD] bg-[#2E2E2E] p-3 font-mono text-xs text-[#F1ECE6] focus:border-[#7D4047] focus:outline-none read-only:opacity-85"
+                    />
+                  </div>
+
+                  {jsonError && <p className="text-xs text-red-700">{jsonError}</p>}
+
+                  <div className="flex items-center justify-between pt-1">
+                    {savedToast ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+                        <Check className="h-3.5 w-3.5" />
+                        Draft updated (publish to activate)
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-[#2E2E2E]/65">
+                        {viewMode === 'PUBLISHED'
+                          ? 'Immutable published snapshot'
+                          : 'Draft changes require Publish to affect evaluations'}
+                      </span>
+                    )}
+                    {permissions.canEditDraftRules && viewMode === 'DRAFT' && (
+                      <button
+                        type="button"
+                        onClick={handleSaveJson}
+                        className="rounded-lg bg-[#7D4047] px-3.5 py-1.5 text-xs font-semibold text-[#FAF7F2] hover:bg-[#663238]"
+                      >
+                        Save Draft JSON
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 text-xs text-[#2E2E2E]/70">Select a rule to inspect its JSON.</div>
+              )}
+            </section>
+
+            {/* Published Rule-Set Versions History */}
+            <section className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] overflow-hidden shadow-[0_1px_3px_rgba(46,46,46,0.04)]">
+              <div className="flex items-center gap-2 border-b border-[#DDD5CD] bg-[#F1ECE6] px-4 py-3">
+                <History className="h-4 w-4 text-[#7D4047]" />
+                <h2 className="font-display text-sm font-semibold text-[#2E2E2E]">
+                  Published Rule-Set Version History
                 </h2>
               </div>
-              {selectedRule && (
-                <span className="font-mono text-xs text-slate-500">{selectedRule.version}</span>
-              )}
-            </div>
-
-            {selectedRule ? (
-              <div className="p-4 space-y-3">
-                <div className="text-xs text-slate-600 space-y-0.5">
-                  <p className="font-display text-sm font-semibold text-slate-900">
-                    {selectedRule.name}
-                  </p>
-                  <p className="font-mono text-xs font-medium text-blue-900">
-                    {selectedRule.ruleId}
-                  </p>
-                  <p>
-                    {selectedRule.regulation} · {selectedRule.citation}
-                  </p>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="rule-params-textarea"
-                    className="flex items-center gap-1.5 text-xs font-medium text-slate-700"
-                  >
-                    <Sliders className="h-3.5 w-3.5" />
-                    Machine-Readable Parameters (JSON)
-                  </label>
-                  <textarea
-                    id="rule-params-textarea"
-                    rows={10}
-                    value={jsonDraft}
-                    onChange={(e) => setJsonDraft(e.target.value)}
-                    className="mt-1.5 w-full rounded-md border border-slate-300 bg-slate-950 p-3 font-mono text-xs text-slate-100 focus:border-blue-600 focus:outline-none"
-                  />
-                </div>
-
-                {jsonError && <p className="text-xs text-red-700">{jsonError}</p>}
-
-                <div className="flex items-center justify-between pt-1">
-                  {savedToast ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
-                      <Check className="h-3.5 w-3.5" />
-                      Parameters updated
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-slate-500">
-                      Stored in PostgreSQL `rules.rule_payload`
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleSaveJson}
-                    className="rounded-md bg-blue-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-800"
-                  >
-                    Apply JSON Rule
-                  </button>
-                </div>
+              <div className="divide-y divide-[#DDD5CD]">
+                {publishedRuleSets.map((rs, idx) => (
+                  <div key={rs.versionId} className="p-3 text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-[#7D4047]">{rs.versionId}</span>
+                      <span className="font-mono text-[11px] text-[#2E2E2E]/65">
+                        {idx === 0 ? 'ACTIVE' : 'ARCHIVED'} · {rs.rules.filter((r) => r.enabled).length} rules
+                      </span>
+                    </div>
+                    <p className="text-[#2E2E2E]/85">{rs.releaseNotes}</p>
+                    <p className="font-mono text-[10px] text-[#2E2E2E]/60">
+                      Published by {rs.publishedBy} · {new Date(rs.publishedAt).toLocaleString()}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ) : (
-              <div className="p-6 text-xs text-slate-500">Select a rule to inspect its JSON.</div>
-            )}
-          </section>
+            </section>
+          </div>
         </div>
       )}
 
-      {/* Tab 2: First Schedule MPE Table */}
-      {matrixTab === 'first_schedule' && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-          <section className="rounded-lg border border-slate-200 bg-white lg:col-span-8 overflow-hidden">
-            <div className="border-b border-slate-200 px-4 py-3">
-              <h2 className="font-display text-sm font-semibold text-slate-900">
-                First Schedule — Maximum Permissible Error (Rule 19)
-              </h2>
-              <p className="text-xs text-slate-500">
-                Permitted negative tolerance on declared nominal quantity (Qn) for packaged
-                commodities
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-2.5 font-semibold">Declared Quantity Bracket (Qn)</th>
-                    <th className="px-4 py-2.5 font-semibold">Tolerance Mode</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Maximum Permissible Error</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {LMPC_STATUTORY_MATRIX.first_schedule_mpe_table.map((row) => {
-                    const activeBracket =
-                      mpeTestWeight > row.min_qn &&
-                      (row.max_qn === null || mpeTestWeight <= row.max_qn);
-                    return (
-                      <tr
-                        key={row.bracket}
-                        className={activeBracket ? 'bg-blue-50/50' : 'hover:bg-slate-50'}
-                      >
-                        <td className="px-4 py-3 font-mono font-medium text-slate-900">
-                          {row.bracket}
-                        </td>
-                        <td className="px-4 py-3 text-slate-600 capitalize">
-                          {row.tolerance_type}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-blue-900">
-                          {row.tolerance_value} {row.unit}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-slate-200 bg-white p-4 space-y-3 lg:col-span-4">
-            <h3 className="font-display text-sm font-semibold text-slate-900">
-              First Schedule MPE Lookup Calculator
-            </h3>
-            <div>
-              <label htmlFor="mpe-calc-input" className="block text-xs font-medium text-slate-700">
-                Declared Nominal Quantity (g or ml)
-              </label>
-              <input
-                id="mpe-calc-input"
-                type="number"
-                min="1"
-                max="10000"
-                value={mpeTestWeight}
-                onChange={(e) => setMpeTestWeight(Math.max(1, Number(e.target.value) || 1))}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-sm tabular-nums text-slate-900 focus:border-blue-700 focus:outline-none"
-              />
-            </div>
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5">
-              <div className="flex justify-between">
-                <span className="text-slate-600">Allowed MPE Tolerance:</span>
-                <span className="font-mono font-semibold tabular-nums text-slate-900">
-                  ±{mpePreview.mpeToleranceGrams.toFixed(2)} g/ml ({mpePreview.mpePercentage}%)
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">Minimum Legal Net Weight:</span>
-                <span className="font-mono font-semibold tabular-nums text-emerald-700">
-                  {mpePreview.minAllowedGrams.toFixed(2)} g/ml
-                </span>
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
-
-      {/* Tab 3: Second Schedule Minimum Font Height Matrix */}
+      {/* Tab 2: Second Schedule Minimum Font Height Matrix */}
       {matrixTab === 'second_schedule' && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-          <section className="rounded-lg border border-slate-200 bg-white lg:col-span-8 overflow-hidden">
-            <div className="border-b border-slate-200 px-4 py-3">
-              <h2 className="font-display text-sm font-semibold text-slate-900">
+          <section className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] lg:col-span-8 overflow-hidden shadow-[0_1px_3px_rgba(46,46,46,0.04)]">
+            <div className="border-b border-[#DDD5CD] bg-[#F1ECE6] px-4 py-3">
+              <h2 className="font-display text-sm font-semibold text-[#2E2E2E]">
                 Second Schedule — Minimum Font Height Matrix (Rule 7)
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-[#2E2E2E]/70">
                 Mandatory minimum numeral height for Net Quantity &amp; MRP based on Principal
                 Display Panel (PDP) area in cm²
               </p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                <thead className="border-b border-[#DDD5CD] bg-[#DDD5CD]/50 text-[#2E2E2E]">
                   <tr>
                     <th className="px-4 py-2.5 font-semibold">Principal Display Panel (PDP) Area</th>
                     <th className="px-4 py-2.5 font-semibold">Citation</th>
                     <th className="px-4 py-2.5 font-semibold text-right">Min Font Height (mm)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200">
+                <tbody className="divide-y divide-[#DDD5CD]">
                   {LMPC_STATUTORY_MATRIX.second_schedule_font_height_matrix.map((row) => {
                     const isActive =
                       activePdpAreaCm2 > row.min_area_cm2 &&
@@ -475,13 +549,13 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                     return (
                       <tr
                         key={row.pdp_area_range}
-                        className={isActive ? 'bg-blue-50/50' : 'hover:bg-slate-50'}
+                        className={isActive ? 'bg-[#7D4047]/10' : 'hover:bg-[#F1ECE6]'}
                       >
-                        <td className="px-4 py-3 font-mono font-medium text-slate-900">
+                        <td className="px-4 py-3 font-mono font-medium text-[#2E2E2E]">
                           {row.pdp_area_range}
                         </td>
-                        <td className="px-4 py-3 text-slate-600">{row.citation}</td>
-                        <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-blue-900">
+                        <td className="px-4 py-3 text-[#2E2E2E]/75">{row.citation}</td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-[#7D4047]">
                           {row.min_font_height_mm.toFixed(1)} mm
                         </td>
                       </tr>
@@ -492,16 +566,16 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-200 bg-white p-4 space-y-3 lg:col-span-4">
-            <h3 className="font-display text-sm font-semibold text-slate-900">
-              Active Scanner PDP Area Control
+          <section className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] p-4 space-y-3 shadow-[0_1px_3px_rgba(46,46,46,0.04)] lg:col-span-4">
+            <h3 className="font-display text-sm font-semibold text-[#2E2E2E]">
+              Active Workbench PDP Area Control
             </h3>
-            <p className="text-xs text-slate-500">
-              Adjusting PDP Area updates the live Scanner inspection&apos;s Second Schedule font
-              height requirement immediately.
+            <p className="text-xs text-[#2E2E2E]/70">
+              Adjusting PDP Area updates the Workbench&apos;s Second Schedule font height threshold
+              immediately.
             </p>
             <div>
-              <label htmlFor="rule-pdp-input" className="block text-xs font-medium text-slate-700">
+              <label htmlFor="rule-pdp-input" className="block text-xs font-medium text-[#2E2E2E]">
                 Principal Display Panel Area (cm²)
               </label>
               <input
@@ -511,7 +585,7 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                 max="2000"
                 value={activePdpAreaCm2}
                 onChange={(e) => onChangePdpAreaCm2(Math.max(10, Number(e.target.value) || 150))}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-sm tabular-nums text-slate-900 focus:border-blue-700 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-[#DDD5CD] bg-[#F1ECE6] px-3 py-1.5 font-mono text-sm tabular-nums text-[#2E2E2E] focus:border-[#7D4047] focus:outline-none"
               />
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -520,23 +594,26 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                   key={area}
                   type="button"
                   onClick={() => onChangePdpAreaCm2(area)}
-                  className={`rounded border px-2.5 py-1 font-mono text-xs ${
+                  className={`rounded-lg border px-2.5 py-1 font-mono text-xs ${
                     activePdpAreaCm2 === area
-                      ? 'border-blue-800 bg-blue-50 font-semibold text-blue-900'
-                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                      ? 'border-[#7D4047] bg-[#7D4047] font-semibold text-[#FAF7F2]'
+                      : 'border-[#DDD5CD] bg-[#F1ECE6] text-[#2E2E2E] hover:bg-[#DDD5CD]/50'
                   }`}
                 >
                   {area} cm²
                 </button>
               ))}
             </div>
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
-              <p className="text-slate-600">
-                Active Bracket: <span className="font-mono font-semibold">{pdpFontSpec.pdpAreaRange}</span>
+            <div className="rounded-lg border border-[#DDD5CD] bg-[#F1ECE6] p-3 text-xs space-y-1">
+              <p className="text-[#2E2E2E]/80">
+                Active Bracket:{' '}
+                <span className="font-mono font-semibold text-[#2E2E2E]">
+                  {pdpFontSpec.pdpAreaRange}
+                </span>
               </p>
-              <p className="text-slate-600">
+              <p className="text-[#2E2E2E]/80">
                 Required Minimum Height:{' '}
-                <span className="font-mono font-bold text-blue-900">
+                <span className="font-mono font-bold text-[#7D4047]">
                   {pdpFontSpec.minFontHeightMm.toFixed(1)} mm
                 </span>
               </p>
@@ -545,23 +622,23 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
         </div>
       )}
 
-      {/* Tab 4: Rule 12 SI Units & Rule 6 Category Matrix */}
+      {/* Tab 3: Rule 12 SI Units & Rule 6 Category Matrix */}
       {matrixTab === 'rule12_rule6' && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-          {/* Rule 12 SI Validator */}
-          <section className="rounded-lg border border-slate-200 bg-white p-4 space-y-4 lg:col-span-6">
+          <section className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] p-4 space-y-4 shadow-[0_1px_3px_rgba(46,46,46,0.04)] lg:col-span-6">
             <div>
-              <h2 className="font-display text-sm font-semibold text-slate-900">
+              <h2 className="font-display text-sm font-semibold text-[#2E2E2E]">
                 Rule 12 — Permitted SI Units &amp; Legacy Unit Validator
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-[#2E2E2E]/70">
                 Strictly allows <span className="font-mono">g, kg, ml, L, l, cm, m, N, U</span> and
-                rejects legacy abbreviations (<span className="font-mono">gm, gms, ltr, kgms, mltr</span>).
+                rejects legacy abbreviations (
+                <span className="font-mono">gm, gms, ltr, kgms, mltr</span>).
               </p>
             </div>
 
             <div>
-              <label htmlFor="si-unit-tester" className="block text-xs font-medium text-slate-700">
+              <label htmlFor="si-unit-tester" className="block text-xs font-medium text-[#2E2E2E]">
                 Test Net Quantity Declaration String
               </label>
               <div className="mt-1 flex gap-2">
@@ -570,7 +647,7 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                   type="text"
                   value={siTestInput}
                   onChange={(e) => setSiTestInput(e.target.value)}
-                  className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 font-mono text-xs text-slate-900 focus:border-blue-700 focus:outline-none"
+                  className="flex-1 rounded-lg border border-[#DDD5CD] bg-[#F1ECE6] px-3 py-1.5 font-mono text-xs text-[#2E2E2E] focus:border-[#7D4047] focus:outline-none"
                 />
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -579,7 +656,7 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                     key={sample}
                     type="button"
                     onClick={() => setSiTestInput(sample)}
-                    className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[11px] text-slate-700 hover:bg-slate-100"
+                    className="rounded-md border border-[#DDD5CD] bg-[#F1ECE6] px-2 py-0.5 font-mono text-[11px] text-[#2E2E2E] hover:bg-[#DDD5CD]/50"
                   >
                     {sample}
                   </button>
@@ -589,10 +666,10 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
 
             <div
               data-testid="rule12-validator-output"
-              className={`rounded-md border p-3 text-xs ${
+              className={`rounded-lg border p-3 text-xs ${
                 siPreview.valid
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-                  : 'border-red-200 bg-red-50 text-red-900'
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                  : 'border-red-300 bg-red-50 text-red-900'
               }`}
             >
               <div className="flex items-center gap-2 font-semibold">
@@ -601,7 +678,9 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                 ) : (
                   <XCircle className="h-4 w-4 text-red-700" />
                 )}
-                <span>{siPreview.valid ? 'PASS — Valid Rule 12 SI Unit' : 'FAIL — Non-Compliant Unit'}</span>
+                <span>
+                  {siPreview.valid ? 'PASS — Valid Rule 12 SI Unit' : 'FAIL — Non-Compliant Unit'}
+                </span>
               </div>
               <p className="mt-1">
                 {siPreview.valid
@@ -609,48 +688,28 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
                   : siPreview.correctiveGuidance}
               </p>
             </div>
-
-            <div className="border-t border-slate-100 pt-3">
-              <h3 className="text-xs font-semibold text-slate-800">
-                Forbidden Legacy Abbreviations
-              </h3>
-              <div className="mt-2 divide-y divide-slate-100 text-xs">
-                {LMPC_STATUTORY_MATRIX.rule_12_si_units.forbidden_legacy_abbreviations.map((item) => (
-                  <div key={item.legacy} className="flex items-center justify-between py-1.5">
-                    <span>
-                      <span className="font-mono font-semibold text-red-700">{item.legacy}</span> →{' '}
-                      <span className="font-mono font-semibold text-emerald-700">
-                        {item.replacement}
-                      </span>
-                    </span>
-                    <span className="text-slate-500">{item.reason}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </section>
 
-          {/* Rule 6 Mandatory Declarations Matrix by Category */}
-          <section className="rounded-lg border border-slate-200 bg-white p-4 space-y-4 lg:col-span-6">
+          <section className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] p-4 space-y-4 shadow-[0_1px_3px_rgba(46,46,46,0.04)] lg:col-span-6">
             <div>
-              <h2 className="font-display text-sm font-semibold text-slate-900">
+              <h2 className="font-display text-sm font-semibold text-[#2E2E2E]">
                 Rule 6 Mandatory Declarations by Product Category
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-[#2E2E2E]/70">
                 Statutory label checklist mapped by LMPC commodity classification
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-1 rounded-md bg-slate-100 p-1">
+            <div className="flex flex-wrap gap-1 rounded-lg border border-[#DDD5CD] bg-[#DDD5CD]/45 p-1">
               {Object.keys(LMPC_STATUTORY_MATRIX.rule_6_mandatory_declarations).map((cat) => (
                 <button
                   key={cat}
                   type="button"
                   onClick={() => setSelectedCategory(cat)}
-                  className={`rounded px-2.5 py-1 text-xs font-medium whitespace-nowrap shrink-0 ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap shrink-0 ${
                     selectedCategory === cat
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                      ? 'bg-[#7D4047] text-[#FAF7F2] font-semibold shadow-xs'
+                      : 'text-[#2E2E2E]/80 hover:text-[#2E2E2E]'
                   }`}
                 >
                   {cat}
@@ -660,10 +719,10 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
 
             {LMPC_STATUTORY_MATRIX.rule_6_mandatory_declarations[selectedCategory] && (
               <div className="space-y-2">
-                <p className="font-mono text-[11px] text-blue-900">
+                <p className="font-mono text-[11px] font-semibold text-[#7D4047]">
                   {LMPC_STATUTORY_MATRIX.rule_6_mandatory_declarations[selectedCategory].citation}
                 </p>
-                <ul className="divide-y divide-slate-100 border-t border-slate-100 text-xs text-slate-800">
+                <ul className="divide-y divide-[#DDD5CD]/70 border-t border-[#DDD5CD] text-xs text-[#2E2E2E]">
                   {LMPC_STATUTORY_MATRIX.rule_6_mandatory_declarations[
                     selectedCategory
                   ].required_declarations.map((decl) => (
@@ -677,6 +736,85 @@ export const RuleEngineManager: React.FC<RuleEngineManagerProps> = ({
             )}
           </section>
         </div>
+      )}
+
+      {/* Tab 4: Administrative Audit Log (SEC-07 — Maintainer Only) */}
+      {matrixTab === 'audit_log' && (
+        <section className="rounded-xl border border-[#DDD5CD] bg-[#FAF7F2] overflow-hidden shadow-[0_1px_3px_rgba(46,46,46,0.04)]">
+          <div className="border-b border-[#DDD5CD] bg-[#F1ECE6] px-4 py-3">
+            <h2 className="font-display text-sm font-semibold text-[#2E2E2E]">
+              Security &amp; Rule Governance Audit Log (SEC-07)
+            </h2>
+            <p className="text-xs text-[#2E2E2E]/70">
+              Records actor_id, action, target, timestamp, and outcome for rule publications, HITL
+              decisions, analyses, and access denials.
+            </p>
+          </div>
+
+          {!permissions.canViewAuditLog ? (
+            <div
+              role="alert"
+              className="flex items-center gap-3 p-6 text-xs text-red-900 bg-red-50/70"
+            >
+              <Lock className="h-4 w-4 text-red-700 shrink-0" />
+              <span>
+                ERR-08: Administrative Audit Log requires{' '}
+                <strong>Rule Maintainer / Administrator</strong> privileges (SEC-07 / AUTH-04).
+              </span>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-[#DDD5CD] bg-[#DDD5CD]/50 text-[#2E2E2E]">
+                  <tr>
+                    <th className="px-4 py-2.5 font-semibold">Event ID</th>
+                    <th className="px-4 py-2.5 font-semibold">Actor</th>
+                    <th className="px-4 py-2.5 font-semibold">Action</th>
+                    <th className="px-4 py-2.5 font-semibold">Target</th>
+                    <th className="px-4 py-2.5 font-semibold">Outcome</th>
+                    <th className="px-4 py-2.5 font-semibold">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#DDD5CD]">
+                  {auditEvents.map((ev) => (
+                    <tr key={ev.eventId} className="hover:bg-[#F1ECE6]">
+                      <td className="px-4 py-2.5 font-mono text-[11px] text-[#2E2E2E]/80">
+                        {ev.eventId}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="font-mono text-[#2E2E2E]">{ev.actorId}</span>
+                        <span className="block text-[10px] text-[#2E2E2E]/60">{ev.actorRole}</span>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono font-semibold text-[#7D4047]">
+                        {ev.action}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="font-mono text-[#2E2E2E]">{ev.target}</span>
+                        <span className="block text-[11px] text-[#2E2E2E]/70">{ev.details}</span>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono font-bold">
+                        <span
+                          className={
+                            ev.outcome === 'SUCCESS'
+                              ? 'text-emerald-700'
+                              : ev.outcome === 'DENIED'
+                                ? 'text-red-700'
+                                : 'text-amber-800'
+                          }
+                        >
+                          {ev.outcome}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-[11px] tabular-nums text-[#2E2E2E]/65">
+                        {new Date(ev.timestamp).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );
